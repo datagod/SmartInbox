@@ -47,6 +47,28 @@ See `config.example.yaml` for Ollama URL, Chatterbox URL, default poll interval,
 
 Runtime overrides (poll interval, cooldown, voice, delivery mode) are saved in `localrecordings/.event_voice.json` via the Settings UI.
 
+## Security
+
+**Never commit secrets.** The following stay on your machine only:
+
+| File / directory | Contains |
+|------------------|----------|
+| `.env` | Google OAuth client ID and secret |
+| `config.yaml` | Your local URLs and preferences |
+| `data/` | SQLite DB with Gmail OAuth refresh tokens and email content |
+| `localrecordings/` | Cached Chatterbox audio |
+
+Only `.env.example` and `config.example.yaml` belong in git (placeholders, no real values).
+
+Before pushing, verify nothing sensitive is staged:
+
+```bash
+git status
+git diff --cached
+```
+
+If you ever accidentally commit a secret, rotate it in Google Cloud Console immediately and remove it from git history.
+
 ## License
 
 MIT

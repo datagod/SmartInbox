@@ -3,11 +3,24 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+
+# Secrets and local config (never commit)
 .env
+.env.*
+!.env.example
 config.yaml
+credentials.json
+token.json
+client_secret*.json
+*service-account*.json
+
+# Runtime data (emails, OAuth tokens, TTS cache)
 data/
 localrecordings/
 *.db
+*.sqlite
+*.sqlite3
+
 .DS_Store
 .pytest_cache/
 .ruff_cache/
