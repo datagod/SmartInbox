@@ -92,9 +92,12 @@
       if (data.ok) {
         gmailAppPassword.value = '';
         gmailStatus.textContent = `Connected as ${data.email}`;
+        gmailStatus.className = 'gmail-status';
         btnDisconnect.hidden = false;
       } else {
         gmailStatus.textContent = data.error || 'Connection failed';
+        gmailStatus.className = 'gmail-status error';
+        console.error('Gmail connect failed:', data.error);
       }
     } catch (e) {
       gmailStatus.textContent = `Connection failed: ${e}`;

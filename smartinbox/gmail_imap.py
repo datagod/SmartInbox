@@ -21,6 +21,33 @@ def normalize_app_password(value: str) -> str:
     return re.sub(r"\s+", "", (value or "").strip())
 
 
+def format_imap_error(exc: Exception) -> str:
+    """Turn imaplib errors into readable, actionable messages."""
+    raw = exc.args[0] if getattr(exc, "args", None) else exc
+    if isinstance(raw, bytes):
+        text = raw.decode("utf-8", errors="replace")
+    else:
+        text = str(raw)
+    text = text.strip()
+
+    if "AUTHENTICATIONFAILED" in text or "Invalid credentials" in text:
+        return (
+            "Gmail rejected the login. Checklist: "
+            "(1) Enable IMAP in Gmail → Settings → See all settings → "
+            "Forwarding and POP/IMAP → Enable IMAP. "
+            "(2) Use a 16-character App Password from myaccount.google.com/apppasswords "
+            "— not your regular Gmail password. "
+            "(3) 2-Step Verification must be on. "
+            "(4) The email address must match the account that created the app password."
+        )
+    if "IMAP" in text.upper() and ("disabled" in text.lower() or "not enabled" in text.lower()):
+        return (
+            "IMAP is disabled on this Gmail account. "
+            "In Gmail web: Settings → See all settings → Forwarding and POP/IMAP → Enable IMAP."
+        )
+    return text or str(exc)
+
+
 def decode_mime_header(value: str | None) -> str:
     if not value:
         return ""
@@ -118,10 +145,7 @@ def test_imap_login(email_addr: str, app_password: str) -> None:
     try:
         mail.login(email_addr.strip(), pwd)
     except imaplib.IMAP4.error as e:
-        raise RuntimeError(
-            "IMAP login failed. Use a Google App Password (not your regular Gmail password). "
-            f"Details: {e}"
-        ) from e
+        raise RuntimeError(format_imap_error(e)) from e
     finally:
         try:
             mail.logout()
