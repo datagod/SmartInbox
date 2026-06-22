@@ -30,8 +30,12 @@ from smartinbox.db import (
 )
 from smartinbox.delivery_modes import DELIVERY_MODES, apply_delivery_mode, normalize_delivery_mode
 from smartinbox.email_summary import probe_ollama, summarize_email
-from smartinbox.gmail_fetch import fetch_unread_messages
-from smartinbox.gmail_oauth import build_gmail_service, gmail_connection
+from smartinbox.gmail_imap import (
+    fetch_unread_for_account,
+    gmail_connection,
+    load_imap_account,
+    test_imap_login,
+)
 from smartinbox.tts_recording_cache import (
     format_email_alert_message,
     load_event_tts_prefs,
@@ -273,7 +277,7 @@ class SmartInboxCore:
         if gmail.get("connected"):
             self.add_log(f"Gmail connected as {gmail.get('email')}", "info")
         else:
-            self.add_log("Gmail not connected — open Settings to authorize", "warning")
+            self.add_log("Gmail not connected — add address and app password in Settings", "warning")
         self._poll_task = asyncio.create_task(self._poll_loop())
 
     async def stop(self) -> None:
@@ -295,13 +299,12 @@ class SmartInboxCore:
             await asyncio.sleep(self._poll_interval)
 
     async def poll_inbox(self) -> int:
-        service = build_gmail_service(self._conn)
-        if service is None:
+        if load_imap_account(self._conn) is None:
             self._last_poll_at = time.time()
             return 0
         max_fetch = int(self.gmail_config.get("max_fetch", 20))
         raw_messages = await asyncio.to_thread(
-            fetch_unread_messages, service, max_results=max_fetch
+            fetch_unread_for_account, self._conn, max_results=max_fetch
         )
         self._last_poll_at = time.time()
         new_count = 0
@@ -400,7 +403,17 @@ class SmartInboxCore:
         )
 
     async def health(self) -> dict[str, Any]:
-        gmail = gmail_connection(self._conn)
+        gmail = dict(gmail_connection(self._conn))
+        acct = load_imap_account(self._conn)
+        if acct:
+            try:
+                await asyncio.to_thread(
+                    test_imap_login, acct["email"], acct["app_password"]
+                )
+                gmail["imap_ok"] = True
+            except Exception as e:
+                gmail["imap_ok"] = False
+                gmail["imap_error"] = str(e)
         ollama_probe = await probe_ollama(
             str(self.ollama_config.get("base_url", "http://127.0.0.1:11434")),
             str(self.ollama_config.get("model", "qwen2.5:3b")),

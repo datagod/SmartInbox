@@ -10,7 +10,7 @@ from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.templating import Jinja2Templates
-from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
+from starlette.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
 from starlette.staticfiles import StaticFiles
 
 from smartinbox import __version__
@@ -24,7 +24,7 @@ from smartinbox.chatterbox_tts import (
 )
 from smartinbox.core import SmartInboxCore
 from smartinbox.delivery_modes import apply_delivery_mode, normalize_delivery_mode
-from smartinbox.gmail_oauth import disconnect_gmail, finish_oauth_flow, gmail_connection, start_oauth_flow
+from smartinbox.gmail_imap import connect_gmail, disconnect_gmail, gmail_connection
 from smartinbox.tts_recording_cache import media_type_for_filename, recording_file_path
 
 WEB_DIR = Path(__file__).resolve().parent
@@ -132,35 +132,35 @@ def create_app(core: SmartInboxCore) -> FastAPI:
 
         return StreamingResponse(gen(), media_type="text/event-stream")
 
-    @app.get("/api/auth/google/start")
-    async def auth_start():
+    @app.post("/api/gmail/connect")
+    async def gmail_connect(request: Request):
         try:
-            url, _ = start_oauth_flow(core.conn)
-            return RedirectResponse(url)
-        except Exception as e:
-            return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
-
-    @app.get("/api/auth/google/callback")
-    async def auth_callback(code: str = "", state: str = "", error: str = ""):
-        if error:
-            core.add_log(f"Gmail OAuth denied: {error}", "error")
-            return RedirectResponse("/settings?oauth=denied")
+            body = await request.json()
+        except Exception:
+            body = {}
+        email_addr = str(body.get("email") or "").strip()
+        app_password = str(body.get("app_password") or "").strip()
+        if not email_addr or not app_password:
+            return JSONResponse(
+                {"ok": False, "error": "email and app_password are required"},
+                status_code=400,
+            )
         try:
-            email = finish_oauth_flow(core.conn, code=code, state=state)
-            core.add_log(f"Gmail connected as {email}", "success")
-            return RedirectResponse("/settings?oauth=ok")
+            saved = await asyncio.to_thread(connect_gmail, core.conn, email_addr, app_password)
+            core.add_log(f"Gmail connected via IMAP as {saved}", "success")
+            return JSONResponse({"ok": True, "email": saved})
         except Exception as e:
-            core.add_log(f"Gmail OAuth failed: {e}", "error")
-            return RedirectResponse(f"/settings?oauth=error")
+            core.add_log(f"Gmail connect failed: {e}", "error")
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
 
-    @app.post("/api/auth/google/disconnect")
-    async def auth_disconnect():
+    @app.post("/api/gmail/disconnect")
+    async def gmail_disconnect():
         disconnect_gmail(core.conn)
         core.add_log("Gmail disconnected", "info")
         return JSONResponse({"ok": True})
 
-    @app.get("/api/auth/status")
-    async def auth_status():
+    @app.get("/api/gmail/status")
+    async def gmail_status():
         return JSONResponse(gmail_connection(core.conn))
 
     @app.get("/api/settings")

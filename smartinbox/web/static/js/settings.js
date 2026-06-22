@@ -1,5 +1,7 @@
 (function () {
   const gmailStatus = document.getElementById('gmail-status');
+  const gmailEmail = document.getElementById('gmail-email');
+  const gmailAppPassword = document.getElementById('gmail-app-password');
   const btnConnect = document.getElementById('btn-connect');
   const btnDisconnect = document.getElementById('btn-disconnect');
   const pollInterval = document.getElementById('poll-interval');
@@ -10,38 +12,26 @@
   const deliveryMode = document.getElementById('delivery-mode');
   const ollamaStatus = document.getElementById('ollama-status');
 
-  let voiceChoices = [];
-
-  const params = new URLSearchParams(window.location.search);
-  if (params.get('oauth') === 'ok') {
-    gmailStatus.textContent = 'Gmail connected successfully.';
-    history.replaceState({}, '', '/settings');
-  } else if (params.get('oauth') === 'denied') {
-    gmailStatus.textContent = 'Gmail authorization was denied.';
-    history.replaceState({}, '', '/settings');
-  } else if (params.get('oauth') === 'error') {
-    gmailStatus.textContent = 'Gmail authorization failed — check server log.';
-    history.replaceState({}, '', '/settings');
-  }
-
   async function loadSettings() {
     const [settingsRes, healthRes, voicesRes] = await Promise.all([
       fetch('/api/settings'),
       fetch('/api/health'),
-      fetch('/api/tts/voices'),
+      fetch('/api/tts/voices').catch(() => ({ ok: false, json: async () => ({ ok: false }) })),
     ]);
     const settings = await settingsRes.json();
     const health = await healthRes.json();
-    const voices = await voicesRes.json();
+    const voices = voicesRes.ok ? await voicesRes.json() : { ok: false };
 
     const gmail = settings.gmail || {};
     if (gmail.connected) {
-      gmailStatus.textContent = `Connected as ${gmail.email}`;
-      btnConnect.hidden = true;
+      gmailStatus.textContent = `Connected as ${gmail.email} (IMAP)`;
+      gmailEmail.value = gmail.email || '';
       btnDisconnect.hidden = false;
+      if (health.gmail && health.gmail.imap_ok === false) {
+        gmailStatus.textContent += ` — login error: ${health.gmail.imap_error || 'check app password'}`;
+      }
     } else {
-      gmailStatus.textContent = 'Not connected';
-      btnConnect.hidden = false;
+      gmailStatus.textContent = 'Not connected — enter Gmail and app password below';
       btnDisconnect.hidden = true;
     }
 
@@ -59,7 +49,7 @@
     }
 
     if (voices.ok) {
-      voiceChoices = [];
+      const voiceChoices = [];
       (voices.voices.clone || []).forEach((v) => {
         voiceChoices.push({ mode: 'clone', id: v.id, label: `Clone: ${v.label}` });
       });
@@ -82,6 +72,43 @@
       }
     }
   }
+
+  btnConnect.addEventListener('click', async () => {
+    const email = gmailEmail.value.trim();
+    const appPassword = gmailAppPassword.value.trim();
+    if (!email || !appPassword) {
+      gmailStatus.textContent = 'Enter Gmail address and app password.';
+      return;
+    }
+    btnConnect.disabled = true;
+    gmailStatus.textContent = 'Testing IMAP login…';
+    try {
+      const res = await fetch('/api/gmail/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, app_password: appPassword }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        gmailAppPassword.value = '';
+        gmailStatus.textContent = `Connected as ${data.email}`;
+        btnDisconnect.hidden = false;
+      } else {
+        gmailStatus.textContent = data.error || 'Connection failed';
+      }
+    } catch (e) {
+      gmailStatus.textContent = `Connection failed: ${e}`;
+    } finally {
+      btnConnect.disabled = false;
+    }
+  });
+
+  btnDisconnect.addEventListener('click', async () => {
+    await fetch('/api/gmail/disconnect', { method: 'POST' });
+    gmailEmail.value = '';
+    gmailAppPassword.value = '';
+    await loadSettings();
+  });
 
   document.getElementById('btn-save-timing').addEventListener('click', async () => {
     await fetch('/api/settings', {
@@ -125,11 +152,6 @@
     const blob = await res.blob();
     const audio = new Audio(URL.createObjectURL(blob));
     audio.play();
-  });
-
-  btnDisconnect.addEventListener('click', async () => {
-    await fetch('/api/auth/google/disconnect', { method: 'POST' });
-    await loadSettings();
   });
 
   loadSettings();

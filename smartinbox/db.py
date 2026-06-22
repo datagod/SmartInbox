@@ -1,4 +1,4 @@
-"""SQLite persistence for emails, OAuth tokens, and UI settings."""
+"""SQLite persistence for emails, IMAP credentials, and UI settings."""
 
 from __future__ import annotations
 
@@ -19,10 +19,10 @@ def connect(db_path: Path) -> sqlite3.Connection:
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(
         """
-        CREATE TABLE IF NOT EXISTS oauth_tokens (
+        CREATE TABLE IF NOT EXISTS imap_account (
             id INTEGER PRIMARY KEY CHECK (id = 1),
-            email TEXT,
-            token_json TEXT NOT NULL,
+            email TEXT NOT NULL,
+            app_password TEXT NOT NULL,
             updated_at REAL NOT NULL
         );
 
@@ -45,10 +45,6 @@ def init_db(conn: sqlite3.Connection) -> None:
             value TEXT NOT NULL
         );
 
-        CREATE TABLE IF NOT EXISTS oauth_state (
-            state TEXT PRIMARY KEY,
-            created_at REAL NOT NULL
-        );
         """
     )
     conn.commit()
@@ -71,51 +67,6 @@ def set_setting(conn: sqlite3.Connection, key: str, value: Any) -> None:
         (key, json.dumps(value)),
     )
     conn.commit()
-
-
-def save_oauth_token(conn: sqlite3.Connection, email: str, token_json: str) -> None:
-    conn.execute(
-        "INSERT INTO oauth_tokens (id, email, token_json, updated_at) VALUES (1, ?, ?, ?) "
-        "ON CONFLICT(id) DO UPDATE SET email = excluded.email, "
-        "token_json = excluded.token_json, updated_at = excluded.updated_at",
-        (email, token_json, time.time()),
-    )
-    conn.commit()
-
-
-def load_oauth_token(conn: sqlite3.Connection) -> dict[str, Any] | None:
-    row = conn.execute("SELECT email, token_json FROM oauth_tokens WHERE id = 1").fetchone()
-    if row is None:
-        return None
-    try:
-        token = json.loads(row["token_json"])
-    except json.JSONDecodeError:
-        return None
-    return {"email": row["email"], "token": token}
-
-
-def clear_oauth_token(conn: sqlite3.Connection) -> None:
-    conn.execute("DELETE FROM oauth_tokens WHERE id = 1")
-    conn.commit()
-
-
-def save_oauth_state(conn: sqlite3.Connection, state: str) -> None:
-    conn.execute(
-        "INSERT OR REPLACE INTO oauth_state (state, created_at) VALUES (?, ?)",
-        (state, time.time()),
-    )
-    conn.commit()
-
-
-def pop_oauth_state(conn: sqlite3.Connection, state: str) -> bool:
-    row = conn.execute(
-        "SELECT created_at FROM oauth_state WHERE state = ?", (state,)
-    ).fetchone()
-    if row is None:
-        return False
-    conn.execute("DELETE FROM oauth_state WHERE state = ?", (state,))
-    conn.commit()
-    return time.time() - float(row["created_at"]) < 600.0
 
 
 def upsert_email(conn: sqlite3.Connection, email: dict[str, Any]) -> bool:

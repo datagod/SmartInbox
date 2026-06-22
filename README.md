@@ -6,7 +6,7 @@ Gmail inbox monitor with **Ollama** summaries and **Chatterbox** voice alerts �
 
 ## Features
 
-- **Gmail OAuth** — connect via Google sign-in; no passwords in the UI
+- **Gmail via IMAP + App Password** — enter your address and a Google App Password in Settings (no OAuth, no Cloud Console)
 - **Ollama summaries** — local LLM summarizes each new email
 - **Chatterbox TTS** — spoken alerts with clone voices and delivery modes
 - **Settings tab** — poll interval, alert cooldown, voice, delivery mode
@@ -17,7 +17,15 @@ Gmail inbox monitor with **Ollama** summaries and **Chatterbox** voice alerts �
 - Python 3.10+
 - [Ollama](https://ollama.com/) running locally (e.g. `qwen2.5:3b`)
 - [Chatterbox TTS Server](https://github.com/devnen/Chatterbox-TTS-Server) on port 8004
-- Google Cloud project with **Gmail API** enabled and OAuth 2.0 Web credentials
+- Gmail with **2-Step Verification** and an **App Password**
+
+## Gmail setup (one-time)
+
+1. Turn on [2-Step Verification](https://myaccount.google.com/signinoptions/two-step-verification)
+2. Create an [App Password](https://myaccount.google.com/apppasswords) (Mail → Other → `SmartInbox`)
+3. In SmartInbox **Settings**, enter your Gmail address and the 16-character app password
+
+**Note:** Use the app password, not your regular Gmail password.
 
 ## Quick start
 
@@ -25,27 +33,18 @@ Gmail inbox monitor with **Ollama** summaries and **Chatterbox** voice alerts �
 git clone https://github.com/datagod/SmartInbox.git
 cd SmartInbox
 cp config.example.yaml config.yaml
-cp .env.example .env
-# Edit .env with GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET
-pip install -e .
-smartinbox
+python3 -m venv .venv
+.venv/bin/pip install -e .
+.venv/bin/smartinbox
 ```
 
-Open **http://127.0.0.1:8090** → **Settings** → **Connect Gmail**.
-
-### Google Cloud setup
-
-1. Create a project at [Google Cloud Console](https://console.cloud.google.com/)
-2. Enable **Gmail API**
-3. Create **OAuth 2.0 Client ID** (Web application)
-4. Add authorized redirect URI: `http://127.0.0.1:8090/api/auth/google/callback`
-5. Copy client ID and secret into `.env`
+Open **http://127.0.0.1:8090** → **Settings** → enter Gmail + app password → **Save & connect**.
 
 ## Configuration
 
 See `config.example.yaml` for Ollama URL, Chatterbox URL, default poll interval, and alert template.
 
-Runtime overrides (poll interval, cooldown, voice, delivery mode) are saved in `localrecordings/.event_voice.json` via the Settings UI.
+Gmail credentials are stored in `data/smartinbox.db` (local SQLite, gitignored).
 
 ## Security
 
@@ -53,21 +52,16 @@ Runtime overrides (poll interval, cooldown, voice, delivery mode) are saved in `
 
 | File / directory | Contains |
 |------------------|----------|
-| `.env` | Google OAuth client ID and secret |
+| `data/smartinbox.db` | Gmail app password, emails, summaries |
 | `config.yaml` | Your local URLs and preferences |
-| `data/` | SQLite DB with Gmail OAuth refresh tokens and email content |
 | `localrecordings/` | Cached Chatterbox audio |
 
-Only `.env.example` and `config.example.yaml` belong in git (placeholders, no real values).
-
-Before pushing, verify nothing sensitive is staged:
+Before pushing:
 
 ```bash
 git status
-git diff --cached
+./scripts/check-no-secrets.sh
 ```
-
-If you ever accidentally commit a secret, rotate it in Google Cloud Console immediately and remove it from git history.
 
 ## License
 

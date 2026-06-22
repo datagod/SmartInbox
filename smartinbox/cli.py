@@ -6,7 +6,7 @@ import argparse
 
 import uvicorn
 
-from smartinbox.config import _load_env, load_settings
+from smartinbox.config import load_settings
 from smartinbox.core import SmartInboxCore
 from smartinbox.web.server import create_app
 
@@ -17,7 +17,6 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=None)
     args = parser.parse_args()
 
-    _load_env()
     settings = load_settings()
     host = args.host or str(settings.get("host", "127.0.0.1"))
     port = args.port or int(settings.get("port", 8090))
