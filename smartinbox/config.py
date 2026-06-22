@@ -36,9 +36,19 @@ def base_url() -> str:
     return os.getenv("SMARTINBOX_BASE_URL", "http://127.0.0.1:8090").rstrip("/")
 
 
+def _load_env() -> None:
+    """Reload .env so credential updates apply without restarting the server."""
+    load_dotenv(ROOT / ".env", override=True)
+
+
 def google_oauth_config() -> dict[str, str]:
+    _load_env()
     client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip()
     client_secret = os.getenv("GOOGLE_CLIENT_SECRET", "").strip()
+    if "your-" in client_id or client_id.startswith("your"):
+        client_id = ""
+    if "your-" in client_secret or client_secret.startswith("your"):
+        client_secret = ""
     return {
         "client_id": client_id,
         "client_secret": client_secret,
