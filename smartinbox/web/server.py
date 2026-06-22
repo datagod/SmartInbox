@@ -72,6 +72,10 @@ def create_app(core: SmartInboxCore) -> FastAPI:
                 asyncio.create_task(broadcaster.publish({"type": "emails", "data": payload}))
             elif kind == "email_alerts":
                 asyncio.create_task(broadcaster.publish({"type": "email_alerts", "data": payload}))
+            elif kind == "important_senders":
+                asyncio.create_task(
+                    broadcaster.publish({"type": "important_senders", "data": payload})
+                )
 
         core.add_update_listener(_forward)
         await core.start()
@@ -169,6 +173,9 @@ def create_app(core: SmartInboxCore) -> FastAPI:
             "poll_interval": core.get_poll_interval(),
             "alert_cooldown": core.get_alert_cooldown(),
             "alerts_enabled": core.get_alerts_enabled(),
+            "important_alert_mode": core.get_important_alert_mode(),
+            "other_alert_mode": core.get_other_alert_mode(),
+            "important_senders": core.get_important_senders(),
             "gmail": gmail_connection(core.conn),
             "chatterbox_tts": core.get_snapshot()["chatterbox_tts"],
         })
@@ -185,12 +192,44 @@ def create_app(core: SmartInboxCore) -> FastAPI:
             core.set_alert_cooldown(float(body["alert_cooldown"]))
         if "alerts_enabled" in body:
             core.set_alerts_enabled(bool(body["alerts_enabled"]))
+        if "important_alert_mode" in body:
+            core.set_important_alert_mode(body.get("important_alert_mode"))
+        if "other_alert_mode" in body:
+            core.set_other_alert_mode(body.get("other_alert_mode"))
         return JSONResponse({
             "ok": True,
             "poll_interval": core.get_poll_interval(),
             "alert_cooldown": core.get_alert_cooldown(),
             "alerts_enabled": core.get_alerts_enabled(),
+            "important_alert_mode": core.get_important_alert_mode(),
+            "other_alert_mode": core.get_other_alert_mode(),
         })
+
+    @app.get("/api/important-senders")
+    async def api_important_senders_list():
+        return JSONResponse({"senders": core.get_important_senders()})
+
+    @app.post("/api/important-senders")
+    async def api_important_senders_add(request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        sender = str(body.get("sender") or "").strip()
+        if not sender:
+            return JSONResponse({"ok": False, "error": "sender required"}, status_code=400)
+        try:
+            entry = core.mark_sender_important(sender)
+            return JSONResponse({"ok": True, "sender": entry})
+        except ValueError as e:
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+    @app.delete("/api/important-senders/{sender_key}")
+    async def api_important_senders_remove(sender_key: str):
+        removed = core.unmark_sender_important(sender_key)
+        if not removed:
+            return JSONResponse({"ok": False, "error": "not found"}, status_code=404)
+        return JSONResponse({"ok": True})
 
     @app.get("/api/tts/voice")
     async def api_tts_voice_get():

@@ -45,6 +45,11 @@ def init_db(conn: sqlite3.Connection) -> None:
             value TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS important_senders (
+            sender_key TEXT PRIMARY KEY,
+            display TEXT NOT NULL,
+            created_at REAL NOT NULL
+        );
         """
     )
     conn.commit()

@@ -11,6 +11,39 @@
   const ttsModel = document.getElementById('tts-model');
   const deliveryMode = document.getElementById('delivery-mode');
   const ollamaStatus = document.getElementById('ollama-status');
+  const importantAlertMode = document.getElementById('important-alert-mode');
+  const otherAlertMode = document.getElementById('other-alert-mode');
+  const importantList = document.getElementById('important-list');
+
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  function renderImportantList(senders) {
+    if (!importantList) return;
+    if (!senders || !senders.length) {
+      importantList.innerHTML = '<li class="important-empty">No important senders yet.</li>';
+      return;
+    }
+    importantList.innerHTML = senders
+      .map(
+        (s) =>
+          `<li class="important-item"><span>${escapeHtml(s.display)}</span>` +
+          `<button type="button" class="btn btn-secondary btn-small" data-key="${escapeHtml(s.sender_key)}">Remove</button></li>`
+      )
+      .join('');
+    importantList.querySelectorAll('button[data-key]').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        await fetch(`/api/important-senders/${encodeURIComponent(btn.dataset.key)}`, {
+          method: 'DELETE',
+        });
+        await loadSettings();
+      });
+    });
+  }
 
   async function loadSettings() {
     const [settingsRes, healthRes, voicesRes] = await Promise.all([
@@ -38,6 +71,13 @@
     pollInterval.value = String(settings.poll_interval || 60);
     alertCooldown.value = String(settings.alert_cooldown || 120);
     alertsEnabled.value = settings.alerts_enabled ? '1' : '0';
+    if (importantAlertMode) {
+      importantAlertMode.value = settings.important_alert_mode || 'always';
+    }
+    if (otherAlertMode) {
+      otherAlertMode.value = settings.other_alert_mode || 'cooldown';
+    }
+    renderImportantList(settings.important_senders || []);
 
     const ollama = health.ollama || {};
     if (ollama.reachable && ollama.model_listed) {
@@ -111,6 +151,18 @@
     gmailEmail.value = '';
     gmailAppPassword.value = '';
     await loadSettings();
+  });
+
+  document.getElementById('btn-save-important').addEventListener('click', async () => {
+    await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        important_alert_mode: importantAlertMode.value,
+        other_alert_mode: otherAlertMode.value,
+      }),
+    });
+    gmailStatus.textContent = 'Important sender alert rules saved.';
   });
 
   document.getElementById('btn-save-timing').addEventListener('click', async () => {

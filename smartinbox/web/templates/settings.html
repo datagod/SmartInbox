@@ -47,6 +47,32 @@
     </section>
 
     <section class="set-panel">
+      <h2>Important senders</h2>
+      <p class="set-hint">Double-click an email on the Inbox tab to mark its sender as important.</p>
+      <div class="set-grid">
+        <label class="set-field">
+          <span>Important sender alerts</span>
+          <select class="set-select" id="important-alert-mode">
+            <option value="always">Always alert (skip cooldown)</option>
+            <option value="cooldown">Alert with cooldown</option>
+            <option value="silent">Silent (no voice)</option>
+          </select>
+        </label>
+        <label class="set-field">
+          <span>All other senders</span>
+          <select class="set-select" id="other-alert-mode">
+            <option value="cooldown">Alert with cooldown</option>
+            <option value="silent">Silent (no voice)</option>
+          </select>
+        </label>
+      </div>
+      <ul class="important-list" id="important-list"></ul>
+      <div class="actions-row">
+        <button type="button" class="btn btn-primary" id="btn-save-important">Save alert rules</button>
+      </div>
+    </section>
+
+    <section class="set-panel">
       <h2>Mail checking &amp; alerts</h2>
       <div class="set-grid">
         <label class="set-field">
@@ -103,6 +129,6 @@
       <p class="gmail-status" id="ollama-status">Checking…</p>
     </section>
   </div>
-  <script src="/static/js/settings.js?v=2"></script>
+  <script src="/static/js/settings.js?v=3"></script>
 </body>
 </html>

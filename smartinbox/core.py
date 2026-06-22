@@ -22,11 +22,24 @@ from smartinbox.config import data_dir
 from smartinbox.db import (
     connect,
     get_email,
+    get_setting,
     init_db,
     list_emails,
     mark_email_alerted,
+    set_setting,
     update_email_summary,
     upsert_email,
+)
+from smartinbox.important_senders import (
+    DEFAULT_IMPORTANT_ALERT_MODE,
+    DEFAULT_OTHER_ALERT_MODE,
+    add_important_sender,
+    important_sender_keys,
+    is_important_sender,
+    list_important_senders,
+    normalize_important_alert_mode,
+    normalize_other_alert_mode,
+    remove_important_sender,
 )
 from smartinbox.delivery_modes import DELIVERY_MODES, apply_delivery_mode, normalize_delivery_mode
 from smartinbox.email_summary import probe_ollama, summarize_email
@@ -71,6 +84,12 @@ class SmartInboxCore:
         self._db_path = data_dir(s) / "smartinbox.db"
         self._conn = connect(self._db_path)
         init_db(self._conn)
+        self._important_alert_mode = normalize_important_alert_mode(
+            get_setting(self._conn, "important_alert_mode", DEFAULT_IMPORTANT_ALERT_MODE)
+        )
+        self._other_alert_mode = normalize_other_alert_mode(
+            get_setting(self._conn, "other_alert_mode", DEFAULT_OTHER_ALERT_MODE)
+        )
 
         prefs = load_event_tts_prefs(self.chatterbox_tts_config.get("cache_dir", "localrecordings"))
         self._poll_interval = float(
@@ -151,6 +170,38 @@ class SmartInboxCore:
             alerts_enabled=self._alerts_enabled,
         )
         return self._alert_cooldown
+
+    def get_important_alert_mode(self) -> str:
+        return self._important_alert_mode
+
+    def set_important_alert_mode(self, mode: str | None) -> str:
+        self._important_alert_mode = normalize_important_alert_mode(mode)
+        set_setting(self._conn, "important_alert_mode", self._important_alert_mode)
+        return self._important_alert_mode
+
+    def get_other_alert_mode(self) -> str:
+        return self._other_alert_mode
+
+    def set_other_alert_mode(self, mode: str | None) -> str:
+        self._other_alert_mode = normalize_other_alert_mode(mode)
+        set_setting(self._conn, "other_alert_mode", self._other_alert_mode)
+        return self._other_alert_mode
+
+    def get_important_senders(self) -> list[dict[str, Any]]:
+        return list_important_senders(self._conn)
+
+    def mark_sender_important(self, sender: str | None) -> dict[str, Any]:
+        entry = add_important_sender(self._conn, sender)
+        self.add_log(f"Marked important: {entry['display']}", "success")
+        self._notify("important_senders", self.get_important_senders())
+        return entry
+
+    def unmark_sender_important(self, sender_key: str) -> bool:
+        removed = remove_important_sender(self._conn, sender_key)
+        if removed:
+            self.add_log(f"Removed important sender: {sender_key}", "info")
+            self._notify("important_senders", self.get_important_senders())
+        return removed
 
     def get_alerts_enabled(self) -> bool:
         return self._alerts_enabled
@@ -266,6 +317,10 @@ class SmartInboxCore:
                 "base_url": self.ollama_config.get("base_url"),
                 "model": self.ollama_config.get("model"),
             },
+            "important_senders": self.get_important_senders(),
+            "important_sender_keys": sorted(important_sender_keys(self._conn)),
+            "important_alert_mode": self._important_alert_mode,
+            "other_alert_mode": self._other_alert_mode,
         }
 
     async def start(self) -> None:
@@ -347,17 +402,40 @@ class SmartInboxCore:
             self.add_log("Inbox check — no new mail", "info")
         return new_count
 
+    def _should_alert_for_sender(self, sender: str | None, now: float) -> tuple[bool, str]:
+        if not self._alerts_enabled:
+            return False, "alerts disabled"
+        important = is_important_sender(self._conn, sender)
+        if important:
+            mode = self._important_alert_mode
+            if mode == "silent":
+                return False, "important sender (silent mode)"
+            if mode == "cooldown" and now - self._last_alert_at < self._alert_cooldown:
+                return False, "important sender (cooldown)"
+            return True, "important sender"
+        mode = self._other_alert_mode
+        if mode == "silent":
+            return False, "other sender (silent mode)"
+        if now - self._last_alert_at < self._alert_cooldown:
+            return False, "cooldown"
+        return True, "other sender"
+
     async def _build_alert(self, msg: dict[str, Any]) -> dict[str, Any] | None:
-        if not self._alerts_enabled or not self.chatterbox_tts_config.get("enabled"):
+        if not self.chatterbox_tts_config.get("enabled"):
             return None
         now = time.time()
-        if now - self._last_alert_at < self._alert_cooldown:
-            self.add_log("Alert skipped (cooldown)", "info")
+        sender = str(msg.get("sender") or "")
+        should_alert, reason = self._should_alert_for_sender(sender, now)
+        if not should_alert:
+            self.add_log(f"Alert skipped ({reason})", "info")
             return None
+        template = str(self.chatterbox_tts_config.get("alert_template") or "")
+        if is_important_sender(self._conn, sender) and self._important_alert_mode == "always":
+            template = "Important. " + template
         base_text = format_email_alert_message(
-            str(msg.get("sender") or ""),
+            sender,
             str(msg.get("subject") or ""),
-            template=str(self.chatterbox_tts_config.get("alert_template") or ""),
+            template=template,
         )
         tts_model = self.get_event_tts_model()
         spoken = apply_delivery_mode(
