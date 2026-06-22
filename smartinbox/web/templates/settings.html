@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SmartInbox — Settings</title>
+  <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+  <div class="set-app">
+    <header class="header">
+      <h1>SmartInbox</h1>
+      <p class="subtitle">Settings</p>
+      <nav class="site-nav" aria-label="Site">
+        <a href="/">Inbox</a>
+        <a href="/settings" aria-current="page">Settings</a>
+      </nav>
+    </header>
+
+    <section class="set-panel">
+      <h2>Gmail</h2>
+      <p class="gmail-status" id="gmail-status">Checking…</p>
+      <div class="actions-row">
+        <a class="btn btn-primary" id="btn-connect" href="/api/auth/google/start">Connect Gmail</a>
+        <button type="button" class="btn btn-secondary" id="btn-disconnect" hidden>Disconnect</button>
+      </div>
+      <p class="set-hint">Uses Google OAuth — no passwords stored in SmartInbox.</p>
+    </section>
+
+    <section class="set-panel">
+      <h2>Mail checking &amp; alerts</h2>
+      <div class="set-grid">
+        <label class="set-field">
+          <span>Check mail every (seconds)</span>
+          <input type="number" class="set-input" id="poll-interval" min="15" max="3600" step="15" value="60">
+        </label>
+        <label class="set-field">
+          <span>Alert cooldown (seconds)</span>
+          <input type="number" class="set-input" id="alert-cooldown" min="5" max="3600" step="5" value="120">
+        </label>
+        <label class="set-field">
+          <span>Voice alerts</span>
+          <select class="set-select" id="alerts-enabled">
+            <option value="1">Enabled</option>
+            <option value="0">Disabled</option>
+          </select>
+        </label>
+      </div>
+      <div class="actions-row">
+        <button type="button" class="btn btn-primary" id="btn-save-timing">Save</button>
+      </div>
+    </section>
+
+    <section class="set-panel">
+      <h2>Chatterbox voice</h2>
+      <div class="set-grid">
+        <label class="set-field">
+          <span>Voice</span>
+          <select class="set-select" id="voice-select"></select>
+        </label>
+        <label class="set-field">
+          <span>TTS model</span>
+          <select class="set-select" id="tts-model"></select>
+        </label>
+        <label class="set-field">
+          <span>Delivery mode</span>
+          <select class="set-select" id="delivery-mode">
+            <option value="normal">Normal</option>
+            <option value="conspiracy">Conspiracy</option>
+            <option value="panicky">Panicky</option>
+            <option value="neurotic">Neurotic</option>
+            <option value="playful">Playful</option>
+          </select>
+        </label>
+      </div>
+      <div class="actions-row">
+        <button type="button" class="btn btn-secondary" id="btn-save-voice">Save voice</button>
+        <button type="button" class="btn btn-primary" id="btn-test-speak">Test speak</button>
+      </div>
+    </section>
+
+    <section class="set-panel">
+      <h2>Ollama</h2>
+      <p class="gmail-status" id="ollama-status">Checking…</p>
+    </section>
+  </div>
+  <script src="/static/js/settings.js"></script>
+</body>
+</html>

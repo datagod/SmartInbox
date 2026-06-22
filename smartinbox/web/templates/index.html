@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SmartInbox</title>
+  <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <h1>SmartInbox</h1>
+      <p class="subtitle">Gmail summaries with Ollama and Chatterbox voice alerts</p>
+      <nav class="site-nav" aria-label="Site">
+        <a href="/" aria-current="page">Inbox</a>
+        <a href="/settings">Settings</a>
+      </nav>
+      <p class="status-line" id="conn-status">Connecting…</p>
+    </header>
+
+    <main class="main">
+      <section class="panel inbox-panel">
+        <div class="panel-head">
+          <h2>Inbox</h2>
+          <span class="panel-count" id="inbox-count">0 emails</span>
+        </div>
+        <div class="log-scroll" id="inbox-list">
+          <p class="summary-empty">No emails yet. Connect Gmail in Settings.</p>
+        </div>
+        <div class="actions-row">
+          <button type="button" class="btn btn-secondary" id="btn-poll">Check now</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Summary</h2>
+        </div>
+        <div class="summary-body" id="summary-body">
+          <p class="summary-empty">Select an email to view its Ollama summary.</p>
+        </div>
+        <div class="actions-row">
+          <button type="button" class="btn btn-secondary" id="btn-resummarize" disabled>Re-summarize</button>
+        </div>
+      </section>
+
+      <section class="panel activity-log-panel">
+        <div class="panel-head">
+          <h2>Activity Log</h2>
+        </div>
+        <div class="log-scroll" id="activity-log"></div>
+      </section>
+    </main>
+  </div>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

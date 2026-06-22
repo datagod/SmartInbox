@@ -1,0 +1,31 @@
+# SmartInbox configuration
+# Copy to config.yaml next to this file
+
+port: 8090
+host: "127.0.0.1"
+timezone: America/New_York
+data_dir: data
+
+gmail:
+  poll_interval: 60.0          # seconds between inbox checks (overridable in Settings UI)
+  max_fetch: 20                # max unread messages per poll
+
+ollama:
+  base_url: http://127.0.0.1:11434
+  model: qwen2.5:3b
+  timeout: 120
+
+chatterbox_tts:
+  enabled: true
+  base_url: http://127.0.0.1:8004
+  voice_mode: clone
+  reference_audio_filename: kryten2.mp3
+  predefined_voice_id: ""
+  output_format: wav
+  split_text: true
+  timeout: 120
+  cache_dir: localrecordings
+  alerts_enabled: true
+  alert_cooldown: 120          # seconds between spoken alerts (overridable in Settings UI)
+  alert_template: "New email from {sender}. {subject}"
+  default_test_message: "New email from example at gmail dot com. Your package has shipped."
