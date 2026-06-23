@@ -19,6 +19,25 @@ Return markdown with:
 yes/no and one short line if yes."""
 
 
+def default_system_prompt() -> str:
+    return DEFAULT_SYSTEM
+
+
+def resolve_system_prompt(custom: str | None) -> str:
+    text = (custom or "").strip()
+    return text if text else DEFAULT_SYSTEM
+
+
+def model_matches_listed(model: str, names: list[str]) -> bool:
+    m = model.strip()
+    if not m:
+        return False
+    return any(
+        n == m or n.startswith(f"{m}:") or m.startswith(f"{n}:")
+        for n in names
+    )
+
+
 def build_prompt(sender: str, subject: str, body: str) -> str:
     body_trim = (body or "")[:12000]
     return f"""Summarize this email.
@@ -38,6 +57,7 @@ async def summarize_email(
     sender: str,
     subject: str,
     body: str,
+    system_prompt: str | None = None,
     timeout: float = 120.0,
 ) -> tuple[str | None, str | None]:
     """Call Ollama /api/chat. Returns (markdown, error)."""
@@ -45,7 +65,7 @@ async def summarize_email(
     payload = {
         "model": model,
         "messages": [
-            {"role": "system", "content": DEFAULT_SYSTEM},
+            {"role": "system", "content": resolve_system_prompt(system_prompt)},
             {"role": "user", "content": build_prompt(sender, subject, body)},
         ],
         "stream": False,
@@ -70,31 +90,47 @@ async def summarize_email(
     return str(content).strip(), None
 
 
-async def probe_ollama(base_url: str, model: str, *, timeout: float = 8.0) -> dict[str, Any]:
+async def list_ollama_models(
+    base_url: str, *, timeout: float = 8.0
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Fetch models from Ollama /api/tags. Returns (models, error)."""
     url = base_url.rstrip("/")
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.get(f"{url}/api/tags")
+        if resp.status_code >= 400:
+            return [], f"HTTP {resp.status_code}"
+        data = resp.json()
+        models = [
+            {
+                "name": str(m.get("name", "")),
+                "size": m.get("size"),
+                "modified_at": m.get("modified_at"),
+            }
+            for m in data.get("models", [])
+            if m.get("name")
+        ]
+        models.sort(key=lambda m: m["name"].lower())
+        return models, None
+    except httpx.RequestError as e:
+        return [], str(e)
+
+
+async def probe_ollama(base_url: str, model: str, *, timeout: float = 8.0) -> dict[str, Any]:
     result: dict[str, Any] = {
         "reachable": False,
         "model_listed": False,
         "error": None,
         "models_found": 0,
     }
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.get(f"{url}/api/tags")
-        if resp.status_code >= 400:
-            result["error"] = f"HTTP {resp.status_code}"
-            return result
-        data = resp.json()
-        names = [str(m.get("name", "")) for m in data.get("models", []) if m.get("name")]
-        result["reachable"] = True
-        result["models_found"] = len(names)
-        m = model.strip()
-        result["model_listed"] = any(
-            n == m or n.startswith(f"{m}:") or m.startswith(f"{n}:")
-            for n in names
-        )
-        if not result["model_listed"]:
-            result["error"] = f"model {model!r} not loaded"
-    except httpx.RequestError as e:
-        result["error"] = str(e)
+    models, err = await list_ollama_models(base_url, timeout=timeout)
+    if err:
+        result["error"] = err
+        return result
+    names = [m["name"] for m in models]
+    result["reachable"] = True
+    result["models_found"] = len(names)
+    result["model_listed"] = model_matches_listed(model, names)
+    if not result["model_listed"]:
+        result["error"] = f"model {model!r} not loaded"
     return result

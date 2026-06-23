@@ -14,6 +14,7 @@
       <nav class="site-nav" aria-label="Site">
         <a href="/">Inbox</a>
         <a href="/settings" aria-current="page">Settings</a>
+        <a href="/llm">LLM</a>
       </nav>
     </header>
 
@@ -47,8 +48,34 @@
     </section>
 
     <section class="set-panel">
+      <h2>Proton Mail (Bridge + IMAP)</h2>
+      <p class="gmail-status" id="proton-status">Checking…</p>
+      <div class="set-grid">
+        <label class="set-field">
+          <span>Proton address</span>
+          <input type="email" class="set-input" id="proton-email" placeholder="you@proton.me" autocomplete="username">
+        </label>
+        <label class="set-field">
+          <span>Bridge IMAP password</span>
+          <input type="password" class="set-input" id="proton-password" placeholder="From Proton Mail Bridge" autocomplete="new-password">
+        </label>
+      </div>
+      <div class="actions-row">
+        <button type="button" class="btn btn-primary" id="btn-proton-connect">Save &amp; connect</button>
+        <button type="button" class="btn btn-secondary" id="btn-proton-disconnect" hidden>Disconnect</button>
+      </div>
+      <p class="set-hint">
+        Proton Mail requires
+        <a href="https://proton.me/mail/bridge" target="_blank" rel="noopener">Proton Mail Bridge</a>
+        running on this machine. In Bridge, sign in, enable IMAP, and copy the Bridge password
+        (not your Proton account password). SmartInbox connects to Bridge at
+        <code>127.0.0.1:1143</code>. Stored locally in <code>data/smartinbox.db</code> only.
+      </p>
+    </section>
+
+    <section class="set-panel">
       <h2>Important senders</h2>
-      <p class="set-hint">Double-click an email on the Inbox tab to mark its sender as important.</p>
+      <p class="set-hint">Double-click an email on the Inbox tab to star it and mark its sender as important.</p>
       <div class="set-grid">
         <label class="set-field">
           <span>Important sender alerts</span>
@@ -117,7 +144,22 @@
             <option value="playful">Playful</option>
           </select>
         </label>
+        <label class="set-field">
+          <span>Your name (for greetings)</span>
+          <input type="text" class="set-input" id="alert-greeting-name" placeholder="Bill" autocomplete="name">
+        </label>
+        <label class="set-field">
+          <span>Greet me by name</span>
+          <select class="set-select" id="alert-greeting-enabled">
+            <option value="0">Off</option>
+            <option value="1">On</option>
+          </select>
+        </label>
       </div>
+      <p class="set-hint">
+        When enabled, alerts may start with a random greeting like
+        “Hello Bill” or “Attention Bill” before the email announcement.
+      </p>
       <div class="actions-row">
         <button type="button" class="btn btn-secondary" id="btn-save-voice">Save voice</button>
         <button type="button" class="btn btn-primary" id="btn-test-speak">Test speak</button>
@@ -126,9 +168,12 @@
 
     <section class="set-panel">
       <h2>Ollama</h2>
-      <p class="gmail-status" id="ollama-status">Checking…</p>
+      <p class="set-hint">
+        Choose the summarization model and edit the system prompt on the
+        <a href="/llm">LLM</a> tab.
+      </p>
     </section>
   </div>
-  <script src="/static/js/settings.js?v=3"></script>
+  <script src="/static/js/settings.js?v=5"></script>
 </body>
 </html>

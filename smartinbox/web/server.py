@@ -24,7 +24,14 @@ from smartinbox.chatterbox_tts import (
 )
 from smartinbox.core import SmartInboxCore
 from smartinbox.delivery_modes import apply_delivery_mode, normalize_delivery_mode
-from smartinbox.gmail_imap import connect_gmail, disconnect_gmail, gmail_connection
+from smartinbox.imap_mail import (
+    connect_gmail,
+    connect_mail_account,
+    disconnect_gmail,
+    disconnect_mail_account,
+    gmail_connection,
+    mail_accounts_status,
+)
 from smartinbox.tts_recording_cache import media_type_for_filename, recording_file_path
 
 WEB_DIR = Path(__file__).resolve().parent
@@ -76,6 +83,10 @@ def create_app(core: SmartInboxCore) -> FastAPI:
                 asyncio.create_task(
                     broadcaster.publish({"type": "important_senders", "data": payload})
                 )
+            elif kind == "sender_interest":
+                asyncio.create_task(
+                    broadcaster.publish({"type": "sender_interest", "data": payload})
+                )
 
         core.add_update_listener(_forward)
         await core.start()
@@ -100,6 +111,12 @@ def create_app(core: SmartInboxCore) -> FastAPI:
     async def settings_page(request: Request):
         return TEMPLATES.TemplateResponse(
             request, "settings.html", {"version": __version__}
+        )
+
+    @app.get("/llm", response_class=HTMLResponse)
+    async def llm_page(request: Request):
+        return TEMPLATES.TemplateResponse(
+            request, "llm.html", {"version": __version__}
         )
 
     @app.get("/api/state")
@@ -167,6 +184,62 @@ def create_app(core: SmartInboxCore) -> FastAPI:
     async def gmail_status():
         return JSONResponse(gmail_connection(core.conn))
 
+    @app.get("/api/mail/accounts")
+    async def mail_accounts():
+        return JSONResponse(mail_accounts_status(core.conn))
+
+    @app.post("/api/mail/connect")
+    async def mail_connect(request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        provider = str(body.get("provider") or "").strip().lower()
+        email_addr = str(body.get("email") or "").strip()
+        password = str(body.get("password") or body.get("app_password") or "").strip()
+        if provider not in ("gmail", "proton"):
+            return JSONResponse(
+                {"ok": False, "error": "provider must be gmail or proton"},
+                status_code=400,
+            )
+        if not email_addr or not password:
+            return JSONResponse(
+                {"ok": False, "error": "email and password are required"},
+                status_code=400,
+            )
+        try:
+            saved = await asyncio.to_thread(
+                connect_mail_account,
+                core.conn,
+                provider=provider,
+                email_addr=email_addr,
+                password=password,
+                imap_host=body.get("imap_host"),
+                imap_port=body.get("imap_port"),
+            )
+            label = saved.get("label", provider)
+            core.add_log(f"{label} connected via IMAP as {saved['email']}", "success")
+            return JSONResponse({"ok": True, "account": saved})
+        except Exception as e:
+            core.add_log(f"{provider} connect failed: {e}", "error")
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+    @app.post("/api/mail/disconnect")
+    async def mail_disconnect(request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        provider = str(body.get("provider") or "").strip().lower()
+        if provider not in ("gmail", "proton"):
+            return JSONResponse(
+                {"ok": False, "error": "provider must be gmail or proton"},
+                status_code=400,
+            )
+        disconnect_mail_account(core.conn, provider)
+        core.add_log(f"{provider} disconnected", "info")
+        return JSONResponse({"ok": True})
+
     @app.get("/api/settings")
     async def api_settings_get():
         return JSONResponse({
@@ -176,7 +249,9 @@ def create_app(core: SmartInboxCore) -> FastAPI:
             "important_alert_mode": core.get_important_alert_mode(),
             "other_alert_mode": core.get_other_alert_mode(),
             "important_senders": core.get_important_senders(),
-            "gmail": gmail_connection(core.conn),
+            "gmail": mail_accounts_status(core.conn)["gmail"],
+            "proton": mail_accounts_status(core.conn)["proton"],
+            "mail_accounts": mail_accounts_status(core.conn),
             "chatterbox_tts": core.get_snapshot()["chatterbox_tts"],
         })
 
@@ -239,6 +314,8 @@ def create_app(core: SmartInboxCore) -> FastAPI:
             "chosen": core.get_event_tts_voice(),
             "delivery_mode": core.get_event_tts_delivery_mode(),
             "tts_model": core.get_event_tts_model(),
+            "alert_greeting_name": core.get_alert_greeting_name(),
+            "alert_greeting_enabled": core.get_alert_greeting_enabled(),
             "default_test_message": cfg.get("default_test_message"),
         })
 
@@ -257,7 +334,17 @@ def create_app(core: SmartInboxCore) -> FastAPI:
             core.set_event_tts_delivery_mode(body.get("delivery_mode"))
         if "tts_model" in body:
             core.set_event_tts_model(body.get("tts_model"))
-        return JSONResponse({"ok": True, "chosen": core.get_event_tts_voice()})
+        if "alert_greeting_name" in body or "alert_greeting_enabled" in body:
+            core.set_alert_greeting(
+                name=body.get("alert_greeting_name") if "alert_greeting_name" in body else None,
+                enabled=body.get("alert_greeting_enabled") if "alert_greeting_enabled" in body else None,
+            )
+        return JSONResponse({
+            "ok": True,
+            "chosen": core.get_event_tts_voice(),
+            "alert_greeting_name": core.get_alert_greeting_name(),
+            "alert_greeting_enabled": core.get_alert_greeting_enabled(),
+        })
 
     @app.get("/api/tts/voices")
     async def api_tts_voices():
@@ -273,6 +360,8 @@ def create_app(core: SmartInboxCore) -> FastAPI:
                 "chosen": core.get_event_tts_voice(),
                 "delivery_mode": core.get_event_tts_delivery_mode(),
                 "tts_model": core.get_event_tts_model(),
+                "alert_greeting_name": core.get_alert_greeting_name(),
+                "alert_greeting_enabled": core.get_alert_greeting_enabled(),
             })
         except Exception as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=502)
@@ -322,6 +411,83 @@ def create_app(core: SmartInboxCore) -> FastAPI:
             content=path.read_bytes(),
             media_type=media_type_for_filename(filename),
         )
+
+    @app.get("/api/llm")
+    async def api_llm_get():
+        return JSONResponse(await core.get_llm_state())
+
+    @app.post("/api/llm/model")
+    async def api_llm_set_model(request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        model = str(body.get("model") or "").strip()
+        if not model:
+            return JSONResponse({"ok": False, "error": "model required"}, status_code=400)
+        try:
+            saved = core.set_ollama_model(model)
+            core.add_log(f"Ollama model set to {saved}", "info")
+            return JSONResponse({"ok": True, "model": saved})
+        except ValueError as e:
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+    @app.post("/api/llm/prompt")
+    async def api_llm_set_prompt(request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        prompt = str(body.get("prompt") or "").strip()
+        if not prompt:
+            return JSONResponse({"ok": False, "error": "prompt required"}, status_code=400)
+        try:
+            saved = core.set_summary_system_prompt(prompt)
+            core.add_log("Email summary prompt updated", "info")
+            return JSONResponse({
+                "ok": True,
+                "prompt": saved,
+                "is_custom_prompt": True,
+            })
+        except ValueError as e:
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+    @app.post("/api/llm/prompt/reset")
+    async def api_llm_reset_prompt():
+        core.reset_summary_system_prompt()
+        core.add_log("Email summary prompt reset to default", "info")
+        return JSONResponse({
+            "ok": True,
+            "prompt": core.get_summary_system_prompt(),
+            "is_custom_prompt": False,
+        })
+
+    @app.post("/api/emails/{email_id}/vote")
+    async def api_vote_email(email_id: str, request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        vote = str(body.get("vote") or "").strip().lower()
+        if vote not in ("up", "down"):
+            return JSONResponse({"ok": False, "error": "vote must be 'up' or 'down'"}, status_code=400)
+        try:
+            result = core.vote_email_sender(email_id, vote=vote)
+        except ValueError as e:
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+        if result is None:
+            return JSONResponse({"ok": False, "error": "email not found"}, status_code=404)
+        return JSONResponse({"ok": True, **result})
+
+    @app.post("/api/emails/{email_id}/star")
+    async def api_star_email(email_id: str):
+        try:
+            result = core.star_email(email_id)
+        except ValueError as e:
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+        if result is None:
+            return JSONResponse({"ok": False, "error": "email not found"}, status_code=404)
+        return JSONResponse({"ok": True, **result})
 
     @app.post("/api/summarize/{email_id}")
     async def api_summarize(email_id: str):

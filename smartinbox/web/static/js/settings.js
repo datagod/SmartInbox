@@ -10,10 +10,16 @@
   const voiceSelect = document.getElementById('voice-select');
   const ttsModel = document.getElementById('tts-model');
   const deliveryMode = document.getElementById('delivery-mode');
-  const ollamaStatus = document.getElementById('ollama-status');
+  const alertGreetingName = document.getElementById('alert-greeting-name');
+  const alertGreetingEnabled = document.getElementById('alert-greeting-enabled');
   const importantAlertMode = document.getElementById('important-alert-mode');
   const otherAlertMode = document.getElementById('other-alert-mode');
   const importantList = document.getElementById('important-list');
+  const protonStatus = document.getElementById('proton-status');
+  const protonEmail = document.getElementById('proton-email');
+  const protonPassword = document.getElementById('proton-password');
+  const btnProtonConnect = document.getElementById('btn-proton-connect');
+  const btnProtonDisconnect = document.getElementById('btn-proton-disconnect');
 
   function escapeHtml(s) {
     return String(s)
@@ -46,13 +52,11 @@
   }
 
   async function loadSettings() {
-    const [settingsRes, healthRes, voicesRes] = await Promise.all([
+    const [settingsRes, voicesRes] = await Promise.all([
       fetch('/api/settings'),
-      fetch('/api/health'),
       fetch('/api/tts/voices').catch(() => ({ ok: false, json: async () => ({ ok: false }) })),
     ]);
     const settings = await settingsRes.json();
-    const health = await healthRes.json();
     const voices = voicesRes.ok ? await voicesRes.json() : { ok: false };
 
     const gmail = settings.gmail || {};
@@ -60,12 +64,20 @@
       gmailStatus.textContent = `Connected as ${gmail.email} (IMAP)`;
       gmailEmail.value = gmail.email || '';
       btnDisconnect.hidden = false;
-      if (health.gmail && health.gmail.imap_ok === false) {
-        gmailStatus.textContent += ` — login error: ${health.gmail.imap_error || 'check app password'}`;
-      }
+
     } else {
       gmailStatus.textContent = 'Not connected — enter Gmail and app password below';
       btnDisconnect.hidden = true;
+    }
+
+    const proton = settings.proton || {};
+    if (proton.connected) {
+      protonStatus.textContent = `Connected as ${proton.email} (Bridge IMAP)`;
+      protonEmail.value = proton.email || '';
+      btnProtonDisconnect.hidden = false;
+    } else {
+      protonStatus.textContent = 'Not connected — start Bridge and enter credentials below';
+      btnProtonDisconnect.hidden = true;
     }
 
     pollInterval.value = String(settings.poll_interval || 60);
@@ -78,15 +90,6 @@
       otherAlertMode.value = settings.other_alert_mode || 'cooldown';
     }
     renderImportantList(settings.important_senders || []);
-
-    const ollama = health.ollama || {};
-    if (ollama.reachable && ollama.model_listed) {
-      ollamaStatus.textContent = 'Ollama reachable — model loaded.';
-    } else if (ollama.reachable) {
-      ollamaStatus.textContent = `Ollama reachable — ${ollama.error || 'model not listed'}`;
-    } else {
-      ollamaStatus.textContent = `Ollama unreachable — ${ollama.error || 'check config'}`;
-    }
 
     if (voices.ok) {
       const voiceChoices = [];
@@ -105,6 +108,12 @@
         .join('');
       ttsModel.value = voices.tts_model || 'chatterbox-turbo';
       deliveryMode.value = voices.delivery_mode || 'normal';
+      if (alertGreetingName) {
+        alertGreetingName.value = voices.alert_greeting_name || '';
+      }
+      if (alertGreetingEnabled) {
+        alertGreetingEnabled.value = voices.alert_greeting_enabled ? '1' : '0';
+      }
 
       const chosen = voices.chosen;
       if (chosen) {
@@ -153,6 +162,49 @@
     await loadSettings();
   });
 
+  btnProtonConnect.addEventListener('click', async () => {
+    const email = protonEmail.value.trim();
+    const password = protonPassword.value.trim();
+    if (!email || !password) {
+      protonStatus.textContent = 'Enter Proton address and Bridge IMAP password.';
+      return;
+    }
+    btnProtonConnect.disabled = true;
+    protonStatus.textContent = 'Testing Bridge IMAP login…';
+    try {
+      const res = await fetch('/api/mail/connect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: 'proton', email, password }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        protonPassword.value = '';
+        protonStatus.textContent = `Connected as ${data.account.email}`;
+        protonStatus.className = 'gmail-status';
+        btnProtonDisconnect.hidden = false;
+      } else {
+        protonStatus.textContent = data.error || 'Connection failed';
+        protonStatus.className = 'gmail-status error';
+      }
+    } catch (e) {
+      protonStatus.textContent = `Connection failed: ${e}`;
+    } finally {
+      btnProtonConnect.disabled = false;
+    }
+  });
+
+  btnProtonDisconnect.addEventListener('click', async () => {
+    await fetch('/api/mail/disconnect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider: 'proton' }),
+    });
+    protonEmail.value = '';
+    protonPassword.value = '';
+    await loadSettings();
+  });
+
   document.getElementById('btn-save-important').addEventListener('click', async () => {
     await fetch('/api/settings', {
       method: 'POST',
@@ -180,6 +232,12 @@
 
   document.getElementById('btn-save-voice').addEventListener('click', async () => {
     const [mode, voice] = voiceSelect.value.split('|');
+    const greetingName = alertGreetingName ? alertGreetingName.value.trim() : '';
+    const greetingOn = alertGreetingEnabled ? alertGreetingEnabled.value === '1' : false;
+    if (greetingOn && !greetingName) {
+      gmailStatus.textContent = 'Enter your name to enable greetings.';
+      return;
+    }
     await fetch('/api/tts/voice', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -188,6 +246,8 @@
         voice: voice,
         delivery_mode: deliveryMode.value,
         tts_model: ttsModel.value,
+        alert_greeting_name: greetingName,
+        alert_greeting_enabled: greetingOn,
       }),
     });
     gmailStatus.textContent = 'Voice settings saved.';

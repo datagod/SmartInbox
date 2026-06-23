@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SmartInbox — LLM</title>
+  <link rel="stylesheet" href="/static/css/styles.css">
+</head>
+<body>
+  <div class="set-app">
+    <header class="header">
+      <h1>SmartInbox</h1>
+      <p class="subtitle">LLM</p>
+      <nav class="site-nav" aria-label="Site">
+        <a href="/">Inbox</a>
+        <a href="/settings">Settings</a>
+        <a href="/llm" aria-current="page">LLM</a>
+      </nav>
+    </header>
+
+    <section class="set-panel">
+      <h2>Ollama</h2>
+      <p class="gmail-status" id="ollama-status">Checking…</p>
+      <div id="model-single" class="llm-model-single" hidden>
+        <span class="llm-model-label">Model</span>
+        <code id="model-name"></code>
+      </div>
+      <label class="set-field" id="model-picker" hidden>
+        <span>Model</span>
+        <select class="set-select" id="model-select"></select>
+      </label>
+      <div class="actions-row" id="model-actions" hidden>
+        <button type="button" class="btn btn-primary" id="btn-save-model">Save model</button>
+      </div>
+      <p class="set-hint">
+        Base URL from <code>config.yaml</code>:
+        <code id="ollama-base-url"></code>
+      </p>
+    </section>
+
+    <section class="set-panel">
+      <h2>Email summary prompt</h2>
+      <p class="set-hint">
+        System prompt sent to Ollama when summarizing email. The user message still includes
+        sender, subject, and body.
+      </p>
+      <p class="llm-prompt-status" id="prompt-status"></p>
+      <label class="set-field llm-prompt-field">
+        <span>System prompt</span>
+        <textarea class="set-textarea" id="system-prompt" rows="14" spellcheck="false"></textarea>
+      </label>
+      <div class="actions-row">
+        <button type="button" class="btn btn-primary" id="btn-save-prompt">Save prompt</button>
+        <button type="button" class="btn btn-secondary" id="btn-reset-prompt">Reset to default</button>
+      </div>
+    </section>
+  </div>
+  <script src="/static/js/llm.js?v=1"></script>
+</body>
+</html>

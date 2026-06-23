@@ -1,15 +1,34 @@
 (function () {
   const inboxList = document.getElementById('inbox-list');
   const inboxCount = document.getElementById('inbox-count');
+  const summaryViewport = document.getElementById('summary-viewport');
   const summaryBody = document.getElementById('summary-body');
+  const summaryTheme = document.getElementById('summary-theme');
   const activityLog = document.getElementById('activity-log');
   const connStatus = document.getElementById('conn-status');
   const btnPoll = document.getElementById('btn-poll');
   const btnResummarize = document.getElementById('btn-resummarize');
 
+  const THEME_KEY = 'smartinbox.summaryTheme';
+  const THEMES = [
+    'modern',
+    'ansi',
+    'arcade',
+    'phosphor',
+    'amber',
+    'typewriter',
+    'teleprinter',
+    'dotmatrix',
+    'newsprint',
+    'solarized',
+    'blueprint',
+    'mainframe',
+  ];
+
   let emails = [];
   let selectedId = null;
   let importantKeys = new Set();
+  let senderInterest = {};
   const audioQueue = [];
   let playing = false;
 
@@ -30,11 +49,82 @@
     return importantKeys.has(normalizeSender(sender));
   }
 
-  function appendLog(entry) {
+  function senderScore(sender) {
+    const key = normalizeSender(sender);
+    return Number(senderInterest[key]?.score) || 0;
+  }
+
+  function senderLastVote(sender) {
+    const key = normalizeSender(sender);
+    const vote = senderInterest[key]?.last_vote;
+    return vote === 'up' || vote === 'down' ? vote : null;
+  }
+
+  async function voteSender(emailId, vote) {
+    const res = await fetch(`/api/emails/${encodeURIComponent(emailId)}/vote`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ vote }),
+    });
+    const data = await res.json();
+    if (!data.ok) {
+      appendLog({
+        ts: new Date().toLocaleTimeString(),
+        level: 'error',
+        message: data.error || 'Vote failed',
+      });
+      return;
+    }
+    if (data.interest) {
+      senderInterest[data.interest.sender_key] = data.interest;
+    }
+    renderInbox();
+    const label = vote === 'up' ? 'Upvoted' : 'Downvoted';
+    appendLog({
+      ts: new Date().toLocaleTimeString(),
+      level: 'info',
+      message: `${label} ${data.interest?.display || 'sender'} (score ${data.interest?.score ?? 0})`,
+    });
+  }
+
+  function providerLabel(provider) {
+    if (provider === 'proton') return 'Proton';
+    if (provider === 'gmail') return 'Gmail';
+    return provider || 'Mail';
+  }
+
+  function logSortKey(entry) {
+    if (entry && entry.at != null) return Number(entry.at);
+    return String(entry?.ts || '');
+  }
+
+  function compareLogsDesc(a, b) {
+    const ka = logSortKey(a);
+    const kb = logSortKey(b);
+    if (typeof ka === 'number' && typeof kb === 'number') return kb - ka;
+    return String(kb).localeCompare(String(ka));
+  }
+
+  function buildLogElement(entry) {
     const div = document.createElement('div');
     div.className = 'activity-entry';
     const lvl = (entry.level || 'info').replace('warning', 'warn');
     div.innerHTML = `<span class="lvl-${lvl}">[${entry.ts}]</span> ${escapeHtml(entry.message)}`;
+    return div;
+  }
+
+  function renderActivityLog(entries) {
+    activityLog.innerHTML = '';
+    [...(entries || [])]
+      .sort(compareLogsDesc)
+      .slice(0, 120)
+      .forEach((entry) => {
+        activityLog.appendChild(buildLogElement(entry));
+      });
+  }
+
+  function appendLog(entry) {
+    const div = buildLogElement(entry);
     activityLog.prepend(div);
     while (activityLog.children.length > 120) {
       activityLog.removeChild(activityLog.lastChild);
@@ -48,51 +138,128 @@
       .replace(/>/g, '&gt;');
   }
 
-  async function markImportant(sender) {
-    const res = await fetch('/api/important-senders', {
+  function isStarred(email) {
+    return Boolean(email && (email.starred === 1 || email.starred === true));
+  }
+
+  async function starEmail(emailId) {
+    const res = await fetch(`/api/emails/${encodeURIComponent(emailId)}/star`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sender }),
     });
     const data = await res.json();
-    if (data.ok && data.sender) {
-      importantKeys.add(data.sender.sender_key);
-      renderInbox();
+    if (!data.ok) {
       appendLog({
         ts: new Date().toLocaleTimeString(),
-        level: 'success',
-        message: `Marked important: ${data.sender.display}`,
+        level: 'error',
+        message: data.error || 'Could not star email',
       });
+      return;
     }
+    const row = emails.find((e) => e.id === emailId);
+    if (row && data.email) {
+      Object.assign(row, data.email);
+    }
+    if (data.starred && data.sender) {
+      importantKeys.add(data.sender.sender_key);
+    }
+    renderInbox();
+    appendLog({
+      ts: new Date().toLocaleTimeString(),
+      level: data.starred ? 'success' : 'info',
+      message: data.starred
+        ? `Starred: ${row?.subject || 'email'}`
+        : `Unstarred: ${row?.subject || 'email'}`,
+    });
+  }
+
+  function emailSortKey(e) {
+    const received = Number(e?.received_at);
+    const created = Number(e?.created_at);
+    if (Number.isFinite(received) && received > 0) return received;
+    if (Number.isFinite(created) && created > 0) return created;
+    return 0;
+  }
+
+  function sortEmailsDesc(list) {
+    return [...(list || [])].sort((a, b) => emailSortKey(b) - emailSortKey(a));
   }
 
   function renderInbox() {
     if (!emails.length) {
-      inboxList.innerHTML = '<p class="summary-empty">No emails yet. Connect Gmail in Settings.</p>';
+      inboxList.innerHTML = '<p class="summary-empty">No emails yet. Connect Gmail or Proton in Settings.</p>';
       inboxCount.textContent = '0 emails';
       return;
     }
-    inboxCount.textContent = `${emails.length} emails`;
-    inboxList.innerHTML = emails
+    const sorted = sortEmailsDesc(emails);
+    inboxCount.textContent = `${sorted.length} emails`;
+    inboxList.innerHTML = sorted
       .map((e) => {
         const sel = e.id === selectedId ? ' selected' : '';
-        const imp = isImportantSender(e.sender) ? ' important' : '';
-        const badge = isImportantSender(e.sender)
-          ? '<span class="important-badge" title="Important sender">★</span> '
+        const starred = isStarred(e);
+        const score = senderScore(e.sender);
+        const junk = score < 0 ? ' junk' : '';
+        const imp = starred || isImportantSender(e.sender) ? ' important' : '';
+        const badge = starred
+          ? '<span class="star-badge" title="Starred">★</span> '
+          : '<span class="star-badge star-badge-empty" title="Double-click to star">☆</span> ';
+        const prov = e.provider
+          ? `<span class="provider-badge provider-${escapeHtml(e.provider)}">${escapeHtml(providerLabel(e.provider))}</span> `
           : '';
-        return `<div class="email-item${sel}${imp}" data-id="${escapeHtml(e.id)}" data-sender="${escapeHtml(e.sender || '')}">
-          <div class="email-subject">${badge}${escapeHtml(e.subject || '(no subject)')}</div>
-          <div class="email-meta">${escapeHtml(e.sender || '')} · ${fmtTime(e.received_at)}</div>
+        const lastVote = senderLastVote(e.sender);
+        const upActive = lastVote === 'up' ? ' vote-active' : '';
+        const downActive = lastVote === 'down' ? ' vote-active' : '';
+        return `<div class="email-item${sel}${imp}${starred ? ' starred' : ''}${junk}" data-id="${escapeHtml(e.id)}">
+          <div class="email-votes" role="group" aria-label="Rate sender">
+            <button type="button" class="vote-btn vote-up${upActive}" data-vote="up" title="Interested in this sender" aria-label="Upvote sender">▲</button>
+            <button type="button" class="vote-btn vote-down${downActive}" data-vote="down" title="Mark sender as junk" aria-label="Downvote sender">▼</button>
+          </div>
+          <div class="email-item-body">
+            <div class="email-subject">${badge}${prov}${escapeHtml(e.subject || '(no subject)')}</div>
+            <div class="email-meta">${escapeHtml(e.sender || '')} · ${fmtTime(e.received_at)}</div>
+          </div>
         </div>`;
       })
       .join('');
     inboxList.querySelectorAll('.email-item').forEach((el) => {
-      el.addEventListener('click', () => selectEmail(el.dataset.id));
+      el.addEventListener('click', (ev) => {
+        if (ev.target.closest('.vote-btn')) return;
+        selectEmail(el.dataset.id);
+      });
       el.addEventListener('dblclick', (ev) => {
+        if (ev.target.closest('.vote-btn')) return;
         ev.preventDefault();
-        markImportant(el.dataset.sender);
+        ev.stopPropagation();
+        starEmail(el.dataset.id);
+      });
+      el.querySelectorAll('.vote-btn').forEach((btn) => {
+        btn.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          voteSender(el.dataset.id, btn.dataset.vote);
+        });
       });
     });
+  }
+
+  function applySummaryTheme(theme) {
+    const chosen = THEMES.includes(theme) ? theme : 'modern';
+    if (summaryTheme) summaryTheme.value = chosen;
+    if (summaryViewport) {
+      summaryViewport.className = `summary-viewport theme-${chosen}`;
+    }
+    try {
+      localStorage.setItem(THEME_KEY, chosen);
+    } catch (_) { /* ignore */ }
+  }
+
+  function showSummaryMarkdown(text) {
+    summaryBody.className = 'summary-body markdown-body';
+    summaryBody.innerHTML = renderMarkdown(text);
+  }
+
+  function showSummaryMessage(text, kind) {
+    summaryBody.className = `summary-body${kind ? ` summary-${kind}` : ''}`;
+    summaryBody.textContent = text;
   }
 
   function selectEmail(id) {
@@ -100,8 +267,13 @@
     renderInbox();
     const row = emails.find((e) => e.id === id);
     if (!row) return;
-    const text = row.summary_detailed || row.summary_short || row.snippet || '(no summary yet)';
-    summaryBody.textContent = text;
+    const text = row.summary_detailed || row.summary_short || row.snippet || '';
+    if (text) {
+      showSummaryMarkdown(text);
+    } else {
+      summaryBody.className = 'summary-body markdown-body';
+      summaryBody.innerHTML = '<p class="summary-empty">(no summary yet)</p>';
+    }
     btnResummarize.disabled = false;
   }
 
@@ -131,18 +303,23 @@
   }
 
   function applySnapshot(snap) {
-    emails = snap.emails || [];
+    emails = sortEmailsDesc(snap.emails || []);
     importantKeys = new Set(snap.important_sender_keys || []);
+    senderInterest = snap.sender_interest || {};
     renderInbox();
     if (selectedId) selectEmail(selectedId);
-    (snap.logs || []).slice().reverse().forEach(appendLog);
-    const gmail = snap.gmail || {};
-    if (gmail.connected) {
+    renderActivityLog(snap.logs || []);
+    const mail = snap.mail_accounts || {};
+    const accounts = mail.accounts || [];
+    if (accounts.length) {
+      const names = accounts
+        .map((a) => `${providerLabel(a.provider)}: ${a.email}`)
+        .join(' · ');
       connStatus.textContent =
-        `Gmail: ${gmail.email} · poll ${snap.poll_interval}s · cooldown ${snap.alert_cooldown}s · important: ${snap.important_alert_mode || 'always'}`;
+        `${names} · poll ${snap.poll_interval}s · cooldown ${snap.alert_cooldown}s · important: ${snap.important_alert_mode || 'always'}`;
       connStatus.className = 'status-line';
     } else {
-      connStatus.textContent = 'Gmail not connected — open Settings';
+      connStatus.textContent = 'No mail accounts connected — open Settings';
       connStatus.className = 'status-line warn';
     }
   }
@@ -155,11 +332,15 @@
         if (msg.type === 'snapshot') applySnapshot(msg.data);
         if (msg.type === 'log') appendLog(msg.data);
         if (msg.type === 'emails') {
-          emails = msg.data || [];
+          emails = sortEmailsDesc(msg.data || []);
           renderInbox();
         }
         if (msg.type === 'important_senders') {
           importantKeys = new Set((msg.data || []).map((s) => s.sender_key));
+          renderInbox();
+        }
+        if (msg.type === 'sender_interest') {
+          senderInterest = msg.data || {};
           renderInbox();
         }
         if (msg.type === 'email_alerts') {
@@ -185,24 +366,35 @@
   btnResummarize.addEventListener('click', async () => {
     if (!selectedId) return;
     btnResummarize.disabled = true;
-    summaryBody.textContent = 'Summarizing…';
+    showSummaryMessage('Summarizing…', 'loading');
     try {
       const res = await fetch(`/api/summarize/${encodeURIComponent(selectedId)}`, { method: 'POST' });
       const data = await res.json();
       if (data.ok) {
-        summaryBody.textContent = data.summary;
+        showSummaryMarkdown(data.summary);
         const row = emails.find((e) => e.id === selectedId);
         if (row) {
           row.summary_detailed = data.summary;
           row.summary_short = data.summary.slice(0, 500);
         }
       } else {
-        summaryBody.textContent = data.error || 'Summary failed';
+        showSummaryMessage(data.error || 'Summary failed', 'error');
       }
     } finally {
       btnResummarize.disabled = false;
     }
   });
+
+  if (summaryTheme) {
+    let savedTheme = 'modern';
+    try {
+      savedTheme = localStorage.getItem(THEME_KEY) || 'modern';
+    } catch (_) { /* ignore */ }
+    applySummaryTheme(savedTheme);
+    summaryTheme.addEventListener('change', () => {
+      applySummaryTheme(summaryTheme.value);
+    });
+  }
 
   connectSSE();
 })();

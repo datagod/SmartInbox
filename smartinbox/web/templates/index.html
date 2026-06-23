@@ -4,7 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SmartInbox</title>
-  <link rel="stylesheet" href="/static/css/styles.css">
+  <link rel="stylesheet" href="/static/css/styles.css?v=3">
+  <link rel="stylesheet" href="/static/css/summary-themes.css?v=5">
 </head>
 <body>
   <div class="app">
@@ -14,31 +15,84 @@
       <nav class="site-nav" aria-label="Site">
         <a href="/" aria-current="page">Inbox</a>
         <a href="/settings">Settings</a>
+        <a href="/llm">LLM</a>
       </nav>
       <p class="status-line" id="conn-status">Connecting…</p>
     </header>
 
     <main class="main">
       <section class="panel inbox-panel">
-        <div class="panel-head">
+        <div class="panel-head inbox-panel-head">
           <h2>Inbox</h2>
-          <span class="panel-count" id="inbox-count">0 emails</span>
+          <div class="inbox-head-actions">
+            <span class="panel-count" id="inbox-count">0 emails</span>
+            <button type="button" class="btn btn-primary" id="btn-poll">Check now</button>
+          </div>
         </div>
-        <p class="inbox-hint">Double-click an email to mark its sender as <strong>important</strong>.</p>
+        <p class="inbox-hint">Double-click to <strong>star</strong>. Use ▲/▼ to teach the inbox what you like or junk.</p>
         <div class="log-scroll" id="inbox-list">
-          <p class="summary-empty">No emails yet. Connect Gmail in Settings.</p>
-        </div>
-        <div class="actions-row">
-          <button type="button" class="btn btn-secondary" id="btn-poll">Check now</button>
+          <p class="summary-empty">No emails yet. Connect Gmail or Proton in Settings.</p>
         </div>
       </section>
 
-      <section class="panel">
+      <section class="panel summary-panel">
         <div class="panel-head">
           <h2>Summary</h2>
+          <label class="summary-theme-picker">
+            <span>Theme</span>
+            <select class="summary-theme-select" id="summary-theme" aria-label="Summary display theme">
+              <option value="modern">Modern display</option>
+              <option value="ansi">ANSI color terminal</option>
+              <option value="arcade">Retro arcade CRT</option>
+              <option value="phosphor">Green phosphor CRT</option>
+              <option value="amber">Amber terminal</option>
+              <option value="typewriter">Typewriter</option>
+              <option value="teleprinter">Line printer</option>
+              <option value="dotmatrix">80s dot matrix printer</option>
+              <option value="newsprint">Newsprint</option>
+              <option value="solarized">Solarized</option>
+              <option value="blueprint">Blueprint</option>
+              <option value="mainframe">1970s mainframe</option>
+            </select>
+          </label>
         </div>
-        <div class="summary-body" id="summary-body">
-          <p class="summary-empty">Select an email to view its Ollama summary.</p>
+        <div class="summary-crt-chassis" id="summary-crt-chassis">
+          <div class="crt-bezel-top" aria-hidden="true">
+            <div class="crt-nameplate">
+              <span class="crt-sony">SONY</span>
+              <div class="crt-rgb-bars">
+                <span class="crt-rgb crt-rgb-r"></span>
+                <span class="crt-rgb crt-rgb-g"></span>
+                <span class="crt-rgb crt-rgb-b"></span>
+              </div>
+            </div>
+          </div>
+          <div class="crt-screen-well">
+            <div class="summary-viewport theme-modern" id="summary-viewport">
+          <pre class="ansi-banner" aria-hidden="true"><span class="a-cyan">╔══════════════════════════════════════════════════════╗</span>
+<span class="a-cyan">║</span> <span class="a-yellow">▓▓</span><span class="a-red">▓▓</span><span class="a-green">▓▓</span>  <span class="a-bright-white">SMARTINBOX</span>  <span class="a-magenta">::</span>  <span class="a-bright-cyan">MAIL SUMMARY</span>  <span class="a-blue">[v1]</span> <span class="a-cyan">║</span>
+<span class="a-cyan">╠══════════════════════════════════════════════════════╣</span>
+<span class="a-cyan">║</span> <span class="a-green">█▀▀▀█</span> <span class="a-yellow">█───█</span> <span class="a-red">█───█</span> <span class="a-blue">─█─</span> <span class="a-magenta">█▀▀▀█</span> <span class="a-cyan">█▀▀▀█</span> <span class="a-green">█▀▀█</span> <span class="a-yellow">█▀▀█</span> <span class="a-cyan">║</span>
+<span class="a-cyan">║</span> <span class="a-green">█───█</span> <span class="a-yellow">─█──</span> <span class="a-red">─█──</span> <span class="a-blue">─█─</span> <span class="a-magenta">─█──█</span> <span class="a-cyan">─█──█</span> <span class="a-green">█──█</span> <span class="a-yellow">█──█</span> <span class="a-cyan">║</span>
+<span class="a-cyan">║</span> <span class="a-green">▀▀▀▀▀</span> <span class="a-yellow">─▀──</span> <span class="a-red">─▀──</span> <span class="a-blue">─▀─</span> <span class="a-magenta">▀▀▀▀▀</span> <span class="a-cyan">▀▀▀▀▀</span> <span class="a-green">▀──▀</span> <span class="a-yellow">▀▀▀▀</span> <span class="a-cyan">║</span>
+<span class="a-cyan">╚══════════════════════════════════════════════════════╝</span></pre>
+          <pre class="mainframe-banner" aria-hidden="true"><span class="mf-dim">************************************************************************</span>
+<span class="mf-dim">*</span>  <span class="mf-bright">I B M   S Y S T E M / 3 7 0</span>  <span class="mf-dim">·</span>  <span class="mf-green">T S O   R E A D Y</span>  <span class="mf-dim">·</span>  <span class="mf-amber">S M A R T I N B O X</span>  <span class="mf-dim">*</span>
+<span class="mf-dim">*</span>  <span class="mf-green">JOB MAILSUM</span>  <span class="mf-dim">CLASS=A  MSGCLASS=H  REGION=0M  TIME=1440  LINES=66</span>  <span class="mf-dim">*</span>
+<span class="mf-dim">*</span>  <span class="mf-dim">USER=OPERATOR  TERM=3278  VTAM  RELEASE=03.08.00  PAGE=0001</span>  <span class="mf-dim">*</span>
+<span class="mf-dim">************************************************************************</span></pre>
+          <div class="summary-body markdown-body" id="summary-body">
+            <p class="summary-empty">Select an email to view its Ollama summary.</p>
+          </div>
+            </div>
+          </div>
+          <div class="crt-bezel-bottom" aria-hidden="true">
+            <div class="crt-vent-grille"></div>
+            <div class="crt-power">
+              <span class="crt-power-led" aria-hidden="true"></span>
+              <span class="crt-power-label">POWER</span>
+            </div>
+          </div>
         </div>
         <div class="actions-row">
           <button type="button" class="btn btn-secondary" id="btn-resummarize" disabled>Re-summarize</button>
@@ -53,6 +107,7 @@
       </section>
     </main>
   </div>
-  <script src="/static/js/app.js?v=2"></script>
+  <script src="/static/js/markdown.js?v=1"></script>
+  <script src="/static/js/app.js?v=13"></script>
 </body>
 </html>

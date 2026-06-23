@@ -47,6 +47,11 @@ def load_event_tts_prefs(cache_dir: str) -> dict[str, str]:
     model = str(data.get("tts_model") or "").strip()
     if model:
         prefs["tts_model"] = normalize_tts_model(model)
+    greeting_name = str(data.get("alert_greeting_name") or "").strip()
+    if greeting_name:
+        prefs["alert_greeting_name"] = greeting_name
+    if "alert_greeting_enabled" in data:
+        prefs["alert_greeting_enabled"] = bool(data.get("alert_greeting_enabled"))
     return prefs
 
 
@@ -60,6 +65,8 @@ def save_event_tts_prefs(
     poll_interval: float | None = None,
     alert_cooldown: float | None = None,
     alerts_enabled: bool | None = None,
+    alert_greeting_name: str | None = None,
+    alert_greeting_enabled: bool | None = None,
 ) -> None:
     path = event_voice_pref_path(cache_dir)
     existing = load_event_tts_prefs(cache_dir)
@@ -97,6 +104,18 @@ def save_event_tts_prefs(
         payload["alerts_enabled"] = bool(alerts_enabled)
     elif "alerts_enabled" in extra:
         payload["alerts_enabled"] = extra["alerts_enabled"]
+    if alert_greeting_name is not None:
+        name = str(alert_greeting_name).strip()
+        if name:
+            payload["alert_greeting_name"] = name
+        elif "alert_greeting_name" in extra:
+            del payload["alert_greeting_name"]
+    elif "alert_greeting_name" in extra:
+        payload["alert_greeting_name"] = extra["alert_greeting_name"]
+    if alert_greeting_enabled is not None:
+        payload["alert_greeting_enabled"] = bool(alert_greeting_enabled)
+    elif "alert_greeting_enabled" in extra:
+        payload["alert_greeting_enabled"] = extra["alert_greeting_enabled"]
 
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 

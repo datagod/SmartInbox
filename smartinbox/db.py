@@ -29,6 +29,9 @@ def init_db(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS emails (
             id TEXT PRIMARY KEY,
             thread_id TEXT,
+            account_id TEXT,
+            account_email TEXT,
+            provider TEXT,
             sender TEXT,
             subject TEXT,
             snippet TEXT,
@@ -52,6 +55,25 @@ def init_db(conn: sqlite3.Connection) -> None:
         );
         """
     )
+    conn.commit()
+    _ensure_email_account_columns(conn)
+    from smartinbox.imap_mail import init_imap_accounts_table
+    from smartinbox.sender_interest import init_sender_interest_table
+
+    init_imap_accounts_table(conn)
+    init_sender_interest_table(conn)
+
+
+def _ensure_email_account_columns(conn: sqlite3.Connection) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(emails)").fetchall()}
+    for name, ddl in (
+        ("account_id", "ALTER TABLE emails ADD COLUMN account_id TEXT"),
+        ("account_email", "ALTER TABLE emails ADD COLUMN account_email TEXT"),
+        ("provider", "ALTER TABLE emails ADD COLUMN provider TEXT"),
+        ("starred", "ALTER TABLE emails ADD COLUMN starred INTEGER NOT NULL DEFAULT 0"),
+    ):
+        if name not in cols:
+            conn.execute(ddl)
     conn.commit()
 
 
@@ -81,13 +103,17 @@ def upsert_email(conn: sqlite3.Connection, email: dict[str, Any]) -> bool:
     conn.execute(
         """
         INSERT INTO emails (
-            id, thread_id, sender, subject, snippet, body_text,
+            id, thread_id, account_id, account_email, provider,
+            sender, subject, snippet, body_text,
             received_at, summary_short, summary_detailed, alerted_at, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             email["id"],
             email.get("thread_id"),
+            email.get("account_id"),
+            email.get("account_email"),
+            email.get("provider"),
             email.get("sender"),
             email.get("subject"),
             email.get("snippet"),
@@ -117,6 +143,17 @@ def update_email_summary(
     conn.commit()
 
 
+def set_email_starred(
+    conn: sqlite3.Connection, email_id: str, *, starred: bool
+) -> bool:
+    cur = conn.execute(
+        "UPDATE emails SET starred = ? WHERE id = ?",
+        (1 if starred else 0, email_id),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
 def mark_email_alerted(conn: sqlite3.Connection, email_id: str) -> None:
     conn.execute(
         "UPDATE emails SET alerted_at = ? WHERE id = ?",
@@ -127,7 +164,7 @@ def mark_email_alerted(conn: sqlite3.Connection, email_id: str) -> None:
 
 def list_emails(conn: sqlite3.Connection, *, limit: int = 50) -> list[dict[str, Any]]:
     rows = conn.execute(
-        "SELECT * FROM emails ORDER BY received_at DESC LIMIT ?",
+        "SELECT * FROM emails ORDER BY COALESCE(received_at, created_at) DESC LIMIT ?",
         (limit,),
     ).fetchall()
     return [dict(r) for r in rows]
