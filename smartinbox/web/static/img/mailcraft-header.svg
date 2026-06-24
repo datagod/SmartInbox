@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 48" role="img" aria-label="MailCraft header">
+  <defs>
+    <pattern id="mc-grass" width="16" height="16" patternUnits="userSpaceOnUse">
+      <rect width="16" height="16" fill="#6b4423"/>
+      <rect width="16" height="6" fill="#5d9e45"/>
+      <rect x="2" y="1" width="3" height="2" fill="#7cbd56"/>
+      <rect x="9" y="2" width="4" height="2" fill="#4a8a32"/>
+      <rect x="5" y="4" width="2" height="1" fill="#8ed65f"/>
+    </pattern>
+    <pattern id="mc-stone" width="16" height="16" patternUnits="userSpaceOnUse">
+      <rect width="16" height="16" fill="#7a7a7a"/>
+      <rect x="0" y="0" width="8" height="8" fill="#8b8b8b"/>
+      <rect x="8" y="8" width="8" height="8" fill="#6e6e6e"/>
+      <rect x="3" y="10" width="2" height="2" fill="#5a5a5a"/>
+      <rect x="11" y="3" width="2" height="2" fill="#9a9a9a"/>
+    </pattern>
+  </defs>
+  <rect width="480" height="16" fill="url(#mc-grass)"/>
+  <rect y="16" width="480" height="32" fill="url(#mc-stone)"/>
+  <rect y="16" width="480" height="2" fill="#9a9a9a"/>
+  <rect y="46" width="480" height="2" fill="#4a4a4a"/>
+  <rect x="12" y="22" width="20" height="20" fill="#8b8b8b"/>
+  <rect x="12" y="22" width="20" height="2" fill="#ffffff"/>
+  <rect x="12" y="22" width="2" height="20" fill="#ffffff"/>
+  <rect x="30" y="22" width="2" height="20" fill="#373737"/>
+  <rect x="12" y="40" width="20" height="2" fill="#373737"/>
+  <rect x="15" y="27" width="14" height="10" fill="#c6a87c"/>
+  <rect x="17" y="29" width="10" height="2" fill="#2d2d2d"/>
+  <rect x="17" y="33" width="7" height="2" fill="#2d2d2d"/>
+  <text x="42" y="36" font-family="monospace" font-size="14" font-weight="700" fill="#ffffff" style="paint-order: stroke; stroke: #3f3f3f; stroke-width: 3px;">
+    MAILCRAFT
+  </text>
+  <text x="168" y="36" font-family="monospace" font-size="12" font-weight="700" fill="#d8e8d8">
+    Inbox Summary
+  </text>
+  <rect x="330" y="28" width="138" height="8" fill="#1a1a1a"/>
+  <rect x="331" y="29" width="90" height="6" fill="#80ff20"/>
+  <rect x="330" y="27" width="138" height="1" fill="#ffffff" opacity="0.35"/>
+  <text x="399" y="43" text-anchor="middle" font-family="monospace" font-size="8" font-weight="700" fill="#e8e8e8">Lvl 7</text>
+</svg>

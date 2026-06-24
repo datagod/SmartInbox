@@ -4,10 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SmartInbox — Settings</title>
-  <link rel="stylesheet" href="/static/css/styles.css">
+  <link rel="stylesheet" href="/static/css/styles.css?v=11">
 </head>
 <body>
   <div class="set-app">
+    <div class="set-layout">
+    <div class="set-main">
     <header class="header">
       <h1>SmartInbox</h1>
       <p class="subtitle">Settings</p>
@@ -15,6 +17,8 @@
         <a href="/">Inbox</a>
         <a href="/settings" aria-current="page">Settings</a>
         <a href="/llm">LLM</a>
+        <a href="/phrases">Phrases</a>
+        <a href="/senders">Senders</a>
       </nav>
     </header>
 
@@ -155,15 +159,66 @@
             <option value="1">On</option>
           </select>
         </label>
+        <div class="set-field">
+          <span>Voice summary</span>
+          <div class="settings-view-switcher" id="voice-summary-switcher" role="group" aria-label="Voice summary">
+            <button type="button" class="settings-view-option is-active" data-value="off">Off</button>
+            <button type="button" class="settings-view-option" data-value="on">On</button>
+          </div>
+        </div>
       </div>
       <p class="set-hint">
         When enabled, alerts may start with a random greeting like
-        “Hello Bill” or “Attention Bill” before the email announcement.
+        “Hello Bill”, “Attention good sir Bill”, or “Bill, you have mail” before the email announcement.
       </p>
+      <p class="set-hint">
+        <strong>Voice summary</strong> greets you by name (when enabled), announces who the email is from,
+        then uses the LLM and your voice prompt for a brief spoken summary. Delivery mode still applies when voice summary is off.
+      </p>
+      <div class="voice-style-prompt-block">
+        <p class="set-hint">Voice prompt — used when <strong>Voice summary</strong> is on. Saved files live in <code>prompts/</code>.</p>
+        <label class="set-field">
+          <span>Saved voice prompts</span>
+          <select class="set-select" id="voice-style-prompt-select">
+            <option value="">Loading…</option>
+          </select>
+        </label>
+        <label class="set-field llm-prompt-field">
+          <span>Voice prompt</span>
+          <textarea class="set-textarea" id="voice-style-prompt" rows="10" spellcheck="false"></textarea>
+        </label>
+        <div class="set-grid">
+          <label class="set-field">
+            <span>Save to folder as</span>
+            <input type="text" class="set-input" id="voice-style-prompt-name" placeholder="voice_style_neurotic">
+          </label>
+        </div>
+        <div class="actions-row">
+          <button type="button" class="btn btn-secondary btn-small" id="btn-load-voice-style-prompt">Load</button>
+          <button type="button" class="btn btn-secondary btn-small" id="btn-save-voice-style-prompt-file">Save to folder</button>
+          <button type="button" class="btn btn-secondary btn-small" id="btn-reset-voice-style-prompt">Use built-in default</button>
+        </div>
+      </div>
       <div class="actions-row">
         <button type="button" class="btn btn-secondary" id="btn-save-voice">Save voice</button>
         <button type="button" class="btn btn-primary" id="btn-test-speak">Test speak</button>
       </div>
+    </section>
+
+    <section class="set-panel">
+      <h2>Demo mode</h2>
+      <div class="set-field">
+        <span>Show sample emails for screenshots</span>
+        <div class="settings-view-switcher" id="demo-mode-switcher" role="group" aria-label="Demo mode">
+          <button type="button" class="settings-view-option is-active" data-value="off">Off</button>
+          <button type="button" class="settings-view-option" data-value="on">On</button>
+        </div>
+      </div>
+      <p class="set-hint">
+        When <strong>On</strong>, the Inbox tab shows clearly fake <code>[DEMO]</code> messages so you can
+        capture theme screenshots without exposing real mail. Polling, themes, summaries, and starring still work.
+        Turn demo mode off to return to your live inbox.
+      </p>
     </section>
 
     <section class="set-panel">
@@ -173,7 +228,17 @@
         <a href="/llm">LLM</a> tab.
       </p>
     </section>
+    </div>
+
+    <aside class="set-activity-panel panel activity-log-panel">
+      <div class="panel-head">
+        <h2>Activity Log</h2>
+        <button type="button" class="btn btn-secondary btn-small" id="btn-clear-settings-activity-log">Clear</button>
+      </div>
+      <div class="log-scroll" id="settings-activity-log"></div>
+    </aside>
+    </div>
   </div>
-  <script src="/static/js/settings.js?v=5"></script>
+  <script src="/static/js/settings.js?v=15"></script>
 </body>
 </html>

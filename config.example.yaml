@@ -14,6 +14,7 @@ ollama:
   base_url: http://127.0.0.1:11434
   model: qwen2.5:3b
   timeout: 120
+  prompts_dir: prompts    # saved LLM system prompts (.txt)
 
 chatterbox_tts:
   enabled: true
@@ -29,3 +30,4 @@ chatterbox_tts:
   alert_cooldown: 120          # seconds between spoken alerts (overridable in Settings UI)
   alert_template: "New email from {sender}. {subject}"
   default_test_message: "New email from example at gmail dot com. Your package has shipped."
+  # Voice summary / voice prompt: Settings → Chatterbox voice (saved in .event_voice.json + DB)

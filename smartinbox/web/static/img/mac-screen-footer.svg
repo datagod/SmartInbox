@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 22" role="img" aria-label="Macintosh scrollbar">
+  <rect width="480" height="22" fill="#ffffff"/>
+  <rect y="0" width="480" height="1" fill="#000000"/>
+  <!-- horizontal scrollbar -->
+  <rect x="8" y="6" width="464" height="12" fill="#c0c0c0" stroke="#000000" stroke-width="1"/>
+  <rect x="10" y="8" width="120" height="8" fill="#ffffff" stroke="#000000" stroke-width="1"/>
+  <line x1="52" y1="9" x2="52" y2="15" stroke="#000000" stroke-width="1"/>
+  <line x1="56" y1="9" x2="56" y2="15" stroke="#000000" stroke-width="1"/>
+  <line x1="60" y1="9" x2="60" y2="15" stroke="#000000" stroke-width="1"/>
+  <text x="400" y="15" fill="#000000" font-family="Helvetica, Arial, sans-serif" font-size="9">Page 1 of 1</text>
+</svg>

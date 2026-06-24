@@ -15,6 +15,8 @@ from smartinbox.chatterbox_models import (
 from smartinbox.delivery_modes import apply_delivery_mode, normalize_delivery_mode
 from smartinbox.tts_recording_cache import (
     load_cached_recording,
+    media_type_for_filename,
+    phrase_recording_path,
     recording_path,
     save_recording,
     voice_key_from_settings,
@@ -286,6 +288,37 @@ async def get_or_synthesize_speech(
         return audio, media_type, False, saved_path
 
 
+async def get_or_synthesize_phrase(
+    spoken_text: str,
+    *,
+    phrase: str,
+    mode: str,
+    settings: dict[str, Any],
+) -> tuple[bytes, str, bool, str]:
+    """Synthesize a standalone delivery phrase and save under localrecordings/phrases/."""
+    path = phrase_recording_path(phrase, mode, settings=settings)
+    lock_key = str(path)
+    lock = _tts_locks.get(lock_key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _tts_locks[lock_key] = lock
+
+    async with lock:
+        if path.is_file() and path.stat().st_size > 0:
+            ext = path.suffix.lower().lstrip(".")
+            return (
+                path.read_bytes(),
+                media_type_for_filename(path.name),
+                True,
+                str(path),
+            )
+        audio, media_type = await synthesize_speech(spoken_text, settings=settings)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_bytes(audio)
+        tmp.replace(path)
+        return audio, media_type, False, str(path)
+
+
 async def warm_event_tts_recordings(core: Any, items: list[dict[str, Any]]) -> None:
     """Generate or load cached TTS for new event alert messages."""
     cfg = core.get_event_tts_settings()
@@ -311,7 +344,7 @@ async def warm_event_tts_recordings(core: Any, items: list[dict[str, Any]]) -> N
             else:
                 core.add_log(
                     f"Event TTS generated ({text!r}, {voice}), saved: {saved_path}",
-                    "success",
+                    "info",
                 )
         except Exception as e:
             core.add_log(f"Event TTS failed ({text!r}): {e}", "warning")

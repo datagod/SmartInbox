@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SmartInbox — Phrases</title>
+  <link rel="stylesheet" href="/static/css/styles.css?v=4">
+</head>
+<body>
+  <div class="set-app phrases-app">
+    <header class="header">
+      <h1>SmartInbox</h1>
+      <p class="subtitle">Chatterbox phrase library</p>
+      <nav class="site-nav" aria-label="Site">
+        <a href="/">Inbox</a>
+        <a href="/settings">Settings</a>
+        <a href="/llm">LLM</a>
+        <a href="/phrases" aria-current="page">Phrases</a>
+        <a href="/senders">Senders</a>
+      </nav>
+    </header>
+
+    <section class="set-panel">
+      <h2>Alert recordings</h2>
+      <p class="set-hint">
+        Cached email alert audio from <code>localrecordings/</code> — play, download, or remove.
+      </p>
+      <div class="phrases-toolbar">
+        <div class="actions-row phrases-actions">
+          <button type="button" class="btn btn-secondary" id="btn-refresh-recordings">Refresh</button>
+          <button type="button" class="btn btn-secondary btn-danger" id="btn-delete-recordings" disabled>Delete selected</button>
+        </div>
+        <span class="phrases-status" id="recordings-status"></span>
+      </div>
+      <div class="phrases-table-wrap">
+        <table class="phrases-table" id="recordings-table">
+          <thead>
+            <tr>
+              <th class="col-check">
+                <input type="checkbox" id="recordings-select-all" title="Select all" />
+              </th>
+              <th class="col-time">Time</th>
+              <th class="col-phrase">Message</th>
+              <th class="col-mode">Mode</th>
+              <th class="col-size">Size</th>
+              <th class="col-actions">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="recordings-tbody">
+            <tr><td colspan="6" class="phrases-empty">Loading recordings…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="set-panel">
+      <h2>Delivery phrases</h2>
+      <p class="set-hint">
+        Conspiracy, neurotic, and playful follow-ups from delivery modes. Generated audio is saved under
+        <code>localrecordings/phrases/</code> keyed by phrase, voice, and TTS model.
+        Use <a href="/settings">Settings</a> to choose voice and model before generating.
+      </p>
+      <div class="phrases-toolbar">
+        <label class="set-field phrases-filter">
+          <span>Mode</span>
+          <select class="set-select" id="phrase-mode-filter">
+            <option value="">All modes</option>
+            <option value="conspiracy">Conspiracy</option>
+            <option value="neurotic">Neurotic</option>
+            <option value="playful">Playful</option>
+          </select>
+        </label>
+        <label class="set-field phrases-filter">
+          <span>Show</span>
+          <select class="set-select" id="phrase-status-filter">
+            <option value="all">All phrases</option>
+            <option value="recorded">Recorded only</option>
+            <option value="missing">Missing only</option>
+          </select>
+        </label>
+        <div class="actions-row phrases-actions">
+          <button type="button" class="btn btn-secondary" id="btn-refresh-phrases">Refresh</button>
+          <button type="button" class="btn btn-primary" id="btn-generate-missing">Generate missing</button>
+          <button type="button" class="btn btn-secondary" id="btn-generate-all">Regenerate all</button>
+        </div>
+      </div>
+      <p class="phrases-status" id="phrases-status">Loading…</p>
+      <div class="phrases-table-wrap">
+        <table class="phrases-table" id="phrases-table">
+          <thead>
+            <tr>
+              <th class="col-check">
+                <input type="checkbox" id="phrases-select-all" title="Select all visible" />
+              </th>
+              <th class="col-mode">Mode</th>
+              <th class="col-phrase">Phrase</th>
+              <th class="col-status">Status</th>
+              <th class="col-size">Size</th>
+              <th class="col-actions">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="phrases-tbody">
+            <tr><td colspan="6" class="phrases-empty">Loading phrases…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="phrases-toolbar phrases-toolbar-bottom">
+        <button type="button" class="btn btn-secondary btn-danger" id="btn-delete-selected" disabled>Delete selected</button>
+      </div>
+      <audio id="phrases-player" class="hidden" preload="none"></audio>
+    </section>
+  </div>
+  <script src="/static/js/phrases.js?v=1"></script>
+</body>
+</html>

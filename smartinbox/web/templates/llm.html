@@ -15,6 +15,8 @@
         <a href="/">Inbox</a>
         <a href="/settings">Settings</a>
         <a href="/llm" aria-current="page">LLM</a>
+        <a href="/phrases">Phrases</a>
+        <a href="/senders">Senders</a>
       </nav>
     </header>
 
@@ -42,19 +44,41 @@
       <h2>Email summary prompt</h2>
       <p class="set-hint">
         System prompt sent to Ollama when summarizing email. The user message still includes
-        sender, subject, and body.
+        sender, subject, and body. Saved prompts live in
+        <code id="prompts-dir">prompts/</code> on disk.
       </p>
       <p class="llm-prompt-status" id="prompt-status"></p>
+      <div class="llm-prompt-library">
+        <label class="set-field">
+          <span>Saved prompts</span>
+          <select class="set-select" id="saved-prompt-select">
+            <option value="">Loading…</option>
+          </select>
+        </label>
+        <div class="actions-row llm-library-actions">
+          <button type="button" class="btn btn-secondary" id="btn-load-prompt">Load</button>
+          <button type="button" class="btn btn-secondary" id="btn-preview-prompt">Preview</button>
+          <button type="button" class="btn btn-secondary btn-danger" id="btn-delete-prompt-file">Delete file</button>
+        </div>
+      </div>
       <label class="set-field llm-prompt-field">
         <span>System prompt</span>
         <textarea class="set-textarea" id="system-prompt" rows="14" spellcheck="false"></textarea>
       </label>
+      <div class="set-grid llm-save-grid">
+        <label class="set-field">
+          <span>Save to folder as</span>
+          <input type="text" class="set-input" id="prompt-save-name" placeholder="concise_summary">
+        </label>
+      </div>
       <div class="actions-row">
-        <button type="button" class="btn btn-primary" id="btn-save-prompt">Save prompt</button>
-        <button type="button" class="btn btn-secondary" id="btn-reset-prompt">Reset to default</button>
+        <button type="button" class="btn btn-primary" id="btn-save-prompt">Use this prompt</button>
+        <button type="button" class="btn btn-secondary" id="btn-save-prompt-file">Save to folder</button>
+        <button type="button" class="btn btn-secondary" id="btn-overwrite-prompt-file" disabled>Update selected file</button>
+        <button type="button" class="btn btn-secondary" id="btn-reset-prompt">Use built-in default</button>
       </div>
     </section>
   </div>
-  <script src="/static/js/llm.js?v=1"></script>
+  <script src="/static/js/llm.js?v=2"></script>
 </body>
 </html>

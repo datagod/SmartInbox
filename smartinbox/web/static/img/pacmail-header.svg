@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 56" role="img" aria-label="PacMail title">
+  <rect width="480" height="56" fill="#000"/>
+  <rect y="54" width="480" height="2" fill="#2121de"/>
+  <!-- stars -->
+  <rect x="24" y="10" width="4" height="4" fill="#fff"/>
+  <rect x="452" y="14" width="4" height="4" fill="#fff"/>
+  <rect x="438" y="8" width="3" height="3" fill="#ffb8ff"/>
+  <rect x="40" y="18" width="3" height="3" fill="#00ffff"/>
+  <!-- PACMAIL block letters -->
+  <g fill="#ffe100">
+    <!-- P -->
+    <rect x="72" y="14" width="4" height="24"/><rect x="76" y="14" width="16" height="4"/><rect x="88" y="18" width="4" height="8"/><rect x="76" y="22" width="12" height="4"/>
+    <!-- A -->
+    <rect x="104" y="18" width="4" height="20"/><rect x="124" y="18" width="4" height="20"/><rect x="108" y="14" width="16" height="4"/><rect x="108" y="24" width="16" height="4"/>
+    <!-- C -->
+    <rect x="136" y="14" width="20" height="4"/><rect x="136" y="34" width="20" height="4"/><rect x="136" y="18" width="4" height="16"/>
+    <!-- M -->
+    <rect x="164" y="14" width="4" height="24"/><rect x="188" y="14" width="4" height="24"/><rect x="168" y="14" width="8" height="8"/><rect x="180" y="14" width="8" height="8"/>
+    <!-- A -->
+    <rect x="200" y="18" width="4" height="20"/><rect x="220" y="18" width="4" height="20"/><rect x="204" y="14" width="16" height="4"/><rect x="204" y="24" width="16" height="4"/>
+    <!-- I -->
+    <rect x="232" y="14" width="16" height="4"/><rect x="238" y="18" width="4" height="16"/><rect x="232" y="34" width="16" height="4"/>
+    <!-- L -->
+    <rect x="256" y="14" width="4" height="24"/><rect x="256" y="34" width="20" height="4"/>
+  </g>
+  <!-- blink dots on letters -->
+  <rect x="76" y="18" width="4" height="4" fill="#000"/>
+  <rect x="208" y="18" width="4" height="4" fill="#000"/>
+  <!-- subtitle -->
+  <rect x="148" y="44" width="184" height="2" fill="#ff0000"/>
+  <text x="240" y="42" text-anchor="middle" fill="#00ffff" font-family="monospace" font-size="9" font-weight="bold" letter-spacing="3">MAIL SUMMARY</text>
+</svg>

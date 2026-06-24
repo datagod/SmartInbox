@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SmartInbox — Senders</title>
+  <link rel="stylesheet" href="/static/css/styles.css?v=5">
+</head>
+<body>
+  <div class="set-app senders-app">
+    <header class="header">
+      <h1>SmartInbox</h1>
+      <p class="subtitle">Sender rankings from inbox votes</p>
+      <nav class="site-nav" aria-label="Site">
+        <a href="/">Inbox</a>
+        <a href="/settings">Settings</a>
+        <a href="/llm">LLM</a>
+        <a href="/phrases">Phrases</a>
+        <a href="/senders" aria-current="page">Senders</a>
+      </nav>
+    </header>
+
+    <section class="set-panel">
+      <h2>Upvoted senders</h2>
+      <p class="set-hint">
+        Addresses you marked with ▲ on the Inbox, ranked by total upvotes.
+      </p>
+      <p class="senders-status" id="upvoted-status"></p>
+      <div class="senders-table-wrap">
+        <table class="senders-table" id="upvoted-table">
+          <thead>
+            <tr>
+              <th class="col-rank">#</th>
+              <th class="col-sender">Sender</th>
+              <th class="col-votes">▲ Up</th>
+              <th class="col-votes">▼ Down</th>
+              <th class="col-score">Score</th>
+            </tr>
+          </thead>
+          <tbody id="upvoted-tbody">
+            <tr><td colspan="5" class="senders-empty">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="set-panel">
+      <h2>Downvoted senders</h2>
+      <p class="set-hint">
+        Addresses you marked with ▼ as junk, ranked by total downvotes.
+      </p>
+      <p class="senders-status" id="downvoted-status"></p>
+      <div class="senders-table-wrap">
+        <table class="senders-table" id="downvoted-table">
+          <thead>
+            <tr>
+              <th class="col-rank">#</th>
+              <th class="col-sender">Sender</th>
+              <th class="col-votes">▲ Up</th>
+              <th class="col-votes">▼ Down</th>
+              <th class="col-score">Score</th>
+            </tr>
+          </thead>
+          <tbody id="downvoted-tbody">
+            <tr><td colspan="5" class="senders-empty">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="actions-row">
+        <button type="button" class="btn btn-secondary" id="btn-refresh-senders">Refresh</button>
+      </div>
+    </section>
+  </div>
+  <script src="/static/js/senders.js?v=1"></script>
+</body>
+</html>

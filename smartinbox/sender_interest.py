@@ -8,6 +8,8 @@ from typing import Any
 
 from smartinbox.important_senders import display_sender, normalize_sender
 
+MUTED_SCORE_THRESHOLD = -3
+
 
 def init_sender_interest_table(conn: sqlite3.Connection) -> None:
     conn.execute(
@@ -43,6 +45,11 @@ def _row_to_public(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def is_sender_muted(conn: sqlite3.Connection, sender: str | None) -> bool:
+    entry = get_sender_interest(conn, sender)
+    return entry is not None and int(entry["score"]) <= MUTED_SCORE_THRESHOLD
+
+
 def get_sender_interest(conn: sqlite3.Connection, sender: str | None) -> dict[str, Any] | None:
     key = normalize_sender(sender)
     if not key:
@@ -61,6 +68,30 @@ def sender_interest_map(conn: sqlite3.Connection) -> dict[str, dict[str, Any]]:
         "SELECT sender_key, display, upvotes, downvotes, last_vote, updated_at FROM sender_interest"
     ).fetchall()
     return {str(r["sender_key"]): _row_to_public(r) for r in rows}
+
+
+def list_ranked_sender_interest(conn: sqlite3.Connection) -> dict[str, list[dict[str, Any]]]:
+    """Return upvoted senders (by upvotes desc) then downvoted (by downvotes desc)."""
+    up_rows = conn.execute(
+        """
+        SELECT sender_key, display, upvotes, downvotes, last_vote, updated_at
+        FROM sender_interest
+        WHERE upvotes > 0
+        ORDER BY upvotes DESC, downvotes ASC, display COLLATE NOCASE ASC
+        """
+    ).fetchall()
+    down_rows = conn.execute(
+        """
+        SELECT sender_key, display, upvotes, downvotes, last_vote, updated_at
+        FROM sender_interest
+        WHERE downvotes > 0
+        ORDER BY downvotes DESC, upvotes ASC, display COLLATE NOCASE ASC
+        """
+    ).fetchall()
+    return {
+        "upvoted": [_row_to_public(r) for r in up_rows],
+        "downvoted": [_row_to_public(r) for r in down_rows],
+    }
 
 
 def record_sender_vote(

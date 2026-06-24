@@ -7,7 +7,10 @@
   const activityLog = document.getElementById('activity-log');
   const connStatus = document.getElementById('conn-status');
   const btnPoll = document.getElementById('btn-poll');
+  const btnEmptyInbox = document.getElementById('btn-empty-inbox');
+  const btnClearActivityLog = document.getElementById('btn-clear-activity-log');
   const btnResummarize = document.getElementById('btn-resummarize');
+  const summaryViewOptions = document.querySelectorAll('.summary-view-option');
 
   const THEME_KEY = 'smartinbox.summaryTheme';
   const THEMES = [
@@ -23,10 +26,18 @@
     'solarized',
     'blueprint',
     'mainframe',
+    'pdp11',
+    'mailcraft',
+    'pacmail',
+    'lsmail',
+    'c64',
+    'macintosh',
   ];
 
   let emails = [];
+  let demoMode = false;
   let selectedId = null;
+  let summaryViewMode = 'summary';
   let importantKeys = new Set();
   let senderInterest = {};
   const audioQueue = [];
@@ -107,9 +118,11 @@
 
   function buildLogElement(entry) {
     const div = document.createElement('div');
-    div.className = 'activity-entry';
     const lvl = (entry.level || 'info').replace('warning', 'warn');
-    div.innerHTML = `<span class="lvl-${lvl}">[${entry.ts}]</span> ${escapeHtml(entry.message)}`;
+    const isInboxCheck = String(entry.message || '').startsWith('Inbox check —');
+    div.className = isInboxCheck ? 'activity-entry activity-entry--success' : 'activity-entry';
+    const tsClass = isInboxCheck ? 'success' : lvl;
+    div.innerHTML = `<span class="lvl-${tsClass}">[${entry.ts}]</span> ${escapeHtml(entry.message)}`;
     return div;
   }
 
@@ -136,6 +149,44 @@
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;');
+  }
+
+  function looksLikeHtml(text) {
+    return /<(?:html|body|div|p|table|br|span|td|a|img|style)\b/i.test(text);
+  }
+
+  function htmlToEmailText(raw) {
+    try {
+      const doc = new DOMParser().parseFromString(String(raw), 'text/html');
+      doc.querySelectorAll('script, style, head, noscript').forEach((el) => el.remove());
+      return (doc.body?.innerText || doc.body?.textContent || '')
+        .replace(/\r\n/g, '\n')
+        .trim();
+    } catch (_) {
+      return String(raw || '').trim();
+    }
+  }
+
+  function plainTextToEmailHtml(text) {
+    const normalized = String(text || '').replace(/\r\n/g, '\n').trim();
+    if (!normalized) return '<p>(empty message)</p>';
+    return normalized
+      .split(/\n{2,}/)
+      .map((block) => {
+        const lines = block
+          .split('\n')
+          .map((line) => escapeHtml(line))
+          .join('<br>');
+        return `<p>${lines}</p>`;
+      })
+      .join('');
+  }
+
+  function formatOriginalEmailBody(raw) {
+    const text = String(raw || '').trim();
+    if (!text) return '<p>(empty message)</p>';
+    const plain = looksLikeHtml(text) ? htmlToEmailText(text) : text;
+    return plainTextToEmailHtml(plain);
   }
 
   function isStarred(email) {
@@ -186,12 +237,17 @@
 
   function renderInbox() {
     if (!emails.length) {
-      inboxList.innerHTML = '<p class="summary-empty">No emails yet. Connect Gmail or Proton in Settings.</p>';
-      inboxCount.textContent = '0 emails';
+      inboxList.innerHTML = demoMode
+        ? '<p class="summary-empty">Demo inbox is empty. Turn demo mode off and on in Settings to restore samples.</p>'
+        : '<p class="summary-empty">No emails yet. Connect Gmail or Proton in Settings.</p>';
+      inboxCount.textContent = demoMode ? 'DEMO · 0 sample emails' : '0 emails';
       return;
     }
     const sorted = sortEmailsDesc(emails);
-    inboxCount.textContent = `${sorted.length} emails`;
+    const countLabel = sorted.length === 1 ? 'email' : 'emails';
+    inboxCount.textContent = demoMode
+      ? `DEMO · ${sorted.length} sample ${countLabel}`
+      : `${sorted.length} ${countLabel}`;
     inboxList.innerHTML = sorted
       .map((e) => {
         const sel = e.id === selectedId ? ' selected' : '';
@@ -242,6 +298,7 @@
   }
 
   function applySummaryTheme(theme) {
+    if (theme === 'minecraft') theme = 'mailcraft';
     const chosen = THEMES.includes(theme) ? theme : 'modern';
     if (summaryTheme) summaryTheme.value = chosen;
     if (summaryViewport) {
@@ -258,15 +315,51 @@
   }
 
   function showSummaryMessage(text, kind) {
+    summaryViewMode = 'summary';
+    updateViewSwitcher();
     summaryBody.className = `summary-body${kind ? ` summary-${kind}` : ''}`;
     summaryBody.textContent = text;
   }
 
-  function selectEmail(id) {
-    selectedId = id;
-    renderInbox();
-    const row = emails.find((e) => e.id === id);
+  function updateViewSwitcher() {
+    if (!summaryViewOptions.length) return;
+    const hasSelection = !!selectedId;
+    summaryViewOptions.forEach((btn) => {
+      const view = btn.dataset.view;
+      const active = hasSelection && summaryViewMode === view;
+      btn.classList.toggle('is-active', active);
+      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+      btn.disabled = !hasSelection;
+    });
+  }
+
+  function showOriginalEmail(row) {
+    const from = row.sender || '(unknown)';
+    const subject = row.subject || '(no subject)';
+    const date = fmtTime(row.received_at);
+    const snippetOnly = !row.body_text && !!row.snippet;
+    const bodyHtml = formatOriginalEmailBody(row.body_text || row.snippet || '');
+    summaryBody.className = 'summary-body original-email-view';
+    summaryBody.innerHTML =
+      '<div class="original-email-meta">' +
+      `<p><span class="original-label">From</span> ${escapeHtml(from)}</p>` +
+      `<p><span class="original-label">Subject</span> ${escapeHtml(subject)}</p>` +
+      `<p><span class="original-label">Date</span> ${escapeHtml(date)}</p>` +
+      '</div>' +
+      (snippetOnly
+        ? '<p class="original-email-note">Showing snippet only — full message body is not stored.</p>'
+        : '') +
+      `<div class="original-email-body">${bodyHtml}</div>`;
+  }
+
+  function renderSummaryPanel() {
+    if (!selectedId) return;
+    const row = emails.find((e) => e.id === selectedId);
     if (!row) return;
+    if (summaryViewMode === 'original') {
+      showOriginalEmail(row);
+      return;
+    }
     const text = row.summary_detailed || row.summary_short || row.snippet || '';
     if (text) {
       showSummaryMarkdown(text);
@@ -274,7 +367,15 @@
       summaryBody.className = 'summary-body markdown-body';
       summaryBody.innerHTML = '<p class="summary-empty">(no summary yet)</p>';
     }
+  }
+
+  function selectEmail(id) {
+    selectedId = id;
+    summaryViewMode = 'summary';
+    renderInbox();
+    renderSummaryPanel();
     btnResummarize.disabled = false;
+    updateViewSwitcher();
   }
 
   function enqueueAlert(alert) {
@@ -303,6 +404,7 @@
   }
 
   function applySnapshot(snap) {
+    demoMode = !!snap.demo_mode;
     emails = sortEmailsDesc(snap.emails || []);
     importantKeys = new Set(snap.important_sender_keys || []);
     senderInterest = snap.sender_interest || {};
@@ -311,15 +413,18 @@
     renderActivityLog(snap.logs || []);
     const mail = snap.mail_accounts || {};
     const accounts = mail.accounts || [];
+    const demoPrefix = demoMode ? 'DEMO MODE · ' : '';
     if (accounts.length) {
       const names = accounts
         .map((a) => `${providerLabel(a.provider)}: ${a.email}`)
         .join(' · ');
       connStatus.textContent =
-        `${names} · poll ${snap.poll_interval}s · cooldown ${snap.alert_cooldown}s · important: ${snap.important_alert_mode || 'always'}`;
-      connStatus.className = 'status-line';
+        `${demoPrefix}${names} · poll ${snap.poll_interval}s · cooldown ${snap.alert_cooldown}s · important: ${snap.important_alert_mode || 'always'}`;
+      connStatus.className = demoMode ? 'status-line warn' : 'status-line';
     } else {
-      connStatus.textContent = 'No mail accounts connected — open Settings';
+      connStatus.textContent = demoMode
+        ? 'DEMO MODE · sample inbox — no live mail shown'
+        : 'No mail accounts connected — open Settings';
       connStatus.className = 'status-line warn';
     }
   }
@@ -331,9 +436,17 @@
         const msg = JSON.parse(ev.data);
         if (msg.type === 'snapshot') applySnapshot(msg.data);
         if (msg.type === 'log') appendLog(msg.data);
+        if (msg.type === 'logs') renderActivityLog(msg.data || []);
         if (msg.type === 'emails') {
           emails = sortEmailsDesc(msg.data || []);
+          if (selectedId && !emails.some((e) => e.id === selectedId)) {
+            selectedId = null;
+            btnResummarize.disabled = true;
+            showSummaryMessage('Select an email to view its Ollama summary.', '');
+            updateViewSwitcher();
+          }
           renderInbox();
+          if (selectedId) renderSummaryPanel();
         }
         if (msg.type === 'important_senders') {
           importantKeys = new Set((msg.data || []).map((s) => s.sender_key));
@@ -361,6 +474,57 @@
     } finally {
       btnPoll.disabled = false;
     }
+  });
+
+  if (btnClearActivityLog) {
+    btnClearActivityLog.addEventListener('click', async () => {
+      btnClearActivityLog.disabled = true;
+      try {
+        await fetch('/api/logs/clear', { method: 'POST' });
+        renderActivityLog([]);
+      } finally {
+        btnClearActivityLog.disabled = false;
+      }
+    });
+  }
+
+  if (btnEmptyInbox) {
+    btnEmptyInbox.addEventListener('click', async () => {
+      if (!emails.length) return;
+      if (!window.confirm('Remove all emails from the inbox?')) return;
+      btnEmptyInbox.disabled = true;
+      try {
+        const res = await fetch('/api/inbox/empty', { method: 'POST' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || !data.ok) {
+          appendLog({
+            ts: new Date().toLocaleTimeString(),
+            level: 'error',
+            message: data.error || 'Failed to empty inbox',
+          });
+        }
+      } catch (e) {
+        appendLog({
+          ts: new Date().toLocaleTimeString(),
+          level: 'error',
+          message: `Failed to empty inbox: ${e}`,
+        });
+      } finally {
+        btnEmptyInbox.disabled = false;
+      }
+    });
+  }
+
+  summaryViewOptions.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      if (!selectedId) return;
+      const view = btn.dataset.view;
+      if (view !== 'summary' && view !== 'original') return;
+      if (summaryViewMode === view) return;
+      summaryViewMode = view;
+      updateViewSwitcher();
+      renderSummaryPanel();
+    });
   });
 
   btnResummarize.addEventListener('click', async () => {

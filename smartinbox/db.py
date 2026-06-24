@@ -173,3 +173,9 @@ def list_emails(conn: sqlite3.Connection, *, limit: int = 50) -> list[dict[str, 
 def get_email(conn: sqlite3.Connection, email_id: str) -> dict[str, Any] | None:
     row = conn.execute("SELECT * FROM emails WHERE id = ?", (email_id,)).fetchone()
     return dict(row) if row else None
+
+
+def clear_all_emails(conn: sqlite3.Connection) -> int:
+    cur = conn.execute("DELETE FROM emails")
+    conn.commit()
+    return int(cur.rowcount)

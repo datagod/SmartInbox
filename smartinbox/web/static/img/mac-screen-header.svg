@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 52" role="img" aria-label="Macintosh menu bar and window">
+  <!-- menu bar -->
+  <rect width="480" height="20" fill="#ffffff"/>
+  <rect y="19" width="480" height="1" fill="#000000"/>
+  <text x="10" y="14" fill="#000000" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="700"></text>
+  <g fill="#000000" font-family="Helvetica, Arial, sans-serif" font-size="11" font-weight="600">
+    <text x="24" y="14">SmartInbox</text>
+    <text x="100" y="14">Mail</text>
+    <text x="138" y="14">Summary</text>
+    <text x="200" y="14">Special</text>
+  </g>
+  <!-- apple menu icon -->
+  <g transform="translate(8,5)" fill="#000000">
+    <path d="M6.5 1.2c.1.9-.5 1.8-1.1 2.4-.7.7-1.5 1.1-2.4 1-.1-.8.5-1.7 1.1-2.3.7-.6 1.5-1 2.4-1.1z"/>
+    <path d="M7.3 3.6c1.3.1 2.2.7 2.8.7-.4 1.1-1.1 2.2-1.9 2.9-.7.6-1.5 1.3-2.5 1.3-1 0-1.6-.5-2.5-.5s-1.6.5-2.5.5c-1 0-1.9-.8-2.5-1.4C-.7 5.7-.1 3.5 1.4 2.2c.7-.6 1.7-.9 2.7-.9 1 0 1.8.5 2.5.5.7 0 1.6-.4 2.7-.4z"/>
+  </g>
+  <!-- window title bar stripes -->
+  <rect y="20" width="480" height="20" fill="#ffffff"/>
+  <defs>
+    <pattern id="macStripes" width="2" height="2" patternUnits="userSpaceOnUse">
+      <rect width="2" height="1" fill="#ffffff"/>
+      <rect y="1" width="2" height="1" fill="#9a9a9a"/>
+    </pattern>
+  </defs>
+  <rect y="20" width="480" height="20" fill="url(#macStripes)"/>
+  <rect y="20" width="480" height="20" fill="none" stroke="#000000" stroke-width="1"/>
+  <!-- close box -->
+  <rect x="8" y="26" width="10" height="10" fill="#ffffff" stroke="#000000" stroke-width="1"/>
+  <text x="240" y="34" text-anchor="middle" fill="#000000" font-family="Helvetica, Arial, sans-serif" font-size="12" font-weight="700">Mail Summary</text>
+  <!-- window content border top -->
+  <rect y="40" width="480" height="12" fill="#ffffff"/>
+  <rect y="40" width="480" height="1" fill="#000000"/>
+</svg>

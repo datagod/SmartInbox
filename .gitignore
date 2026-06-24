@@ -16,6 +16,7 @@ client_secret*.json
 # Runtime data (emails, OAuth tokens, TTS cache)
 data/
 localrecordings/
+prompts/
 *.db
 *.sqlite
 *.sqlite3

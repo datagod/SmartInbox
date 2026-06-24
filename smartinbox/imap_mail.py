@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import email
 import hashlib
+import html
 import imaplib
 import re
 import sqlite3
@@ -11,6 +12,8 @@ import time
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
 from typing import Any
+
+IMAP_TIMEOUT_SECONDS = 30.0
 
 PROVIDER_PRESETS: dict[str, dict[str, Any]] = {
     "gmail": {
@@ -102,10 +105,16 @@ def decode_mime_header(value: str | None) -> str:
     return "".join(parts).strip()
 
 
-def _strip_html(html: str) -> str:
-    text = re.sub(r"<(script|style)[^>]*>.*?</\1>", "", html, flags=re.I | re.S)
+def _strip_html(html_doc: str) -> str:
+    text = re.sub(r"<(script|style)[^>]*>.*?</\1>", "", html_doc, flags=re.I | re.S)
+    text = re.sub(r"<br\s*/?>", "\n", text, flags=re.I)
+    text = re.sub(r"</(p|div|h[1-6]|li|tr|table|blockquote)>", "\n\n", text, flags=re.I)
     text = re.sub(r"<[^>]+>", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
+    text = html.unescape(text)
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n[ \t]+", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
 def _extract_body(msg: email.message.Message) -> str:
@@ -168,9 +177,11 @@ def parse_imap_message(
         try:
             received_at = parsedate_to_datetime(date_hdr).timestamp()
         except (TypeError, ValueError, OSError):
-            received_at = time.time()
+            received_at = 0.0
+    uid_str = imap_uid.decode() if isinstance(imap_uid, bytes) else str(imap_uid)
     return {
         "id": message_id_for(msg, imap_uid, account_id),
+        "imap_uid": uid_str,
         "account_id": account_id,
         "account_email": account_email,
         "provider": provider,
@@ -186,11 +197,13 @@ def parse_imap_message(
 def _imap_connect(
     host: str, port: int, *, use_ssl: bool, use_starttls: bool = False
 ) -> imaplib.IMAP4:
+    timeout = IMAP_TIMEOUT_SECONDS
     if use_ssl:
-        return imaplib.IMAP4_SSL(host, port)
-    mail = imaplib.IMAP4(host, port)
-    if use_starttls:
-        mail.starttls()
+        mail = imaplib.IMAP4_SSL(host, port, timeout=timeout)
+    else:
+        mail = imaplib.IMAP4(host, port, timeout=timeout)
+        if use_starttls:
+            mail.starttls()
     return mail
 
 
@@ -274,6 +287,68 @@ def fetch_unread_imap(
         except Exception:
             pass
     return messages
+
+
+def _login_imap_for_account(acct: dict[str, Any], *, readonly: bool = False) -> imaplib.IMAP4:
+    use_ssl = bool(acct["use_ssl"])
+    mail = _imap_connect(
+        acct["imap_host"],
+        int(acct["imap_port"]),
+        use_ssl=use_ssl,
+        use_starttls=preset_use_starttls(acct["provider"], use_ssl=use_ssl),
+    )
+    mail.login(acct["email"].strip(), normalize_password(acct["password"]))
+    mail.select("INBOX", readonly=readonly)
+    return mail
+
+
+def mark_imap_uids_seen_for_account(acct: dict[str, Any], uids: list[str]) -> int:
+    clean = [str(u).strip() for u in uids if str(u).strip()]
+    if not clean:
+        return 0
+    mail = _login_imap_for_account(acct, readonly=False)
+    marked = 0
+    try:
+        for uid in clean:
+            status, _ = mail.store(uid, "+FLAGS", "\\Seen")
+            if status == "OK":
+                marked += 1
+    except imaplib.IMAP4.error as e:
+        raise RuntimeError(
+            format_imap_error(e, provider=str(acct.get("provider") or "mail"))
+        ) from e
+    finally:
+        try:
+            mail.logout()
+        except Exception:
+            pass
+    return marked
+
+
+def mark_all_unseen_seen_for_account(acct: dict[str, Any]) -> int:
+    mail = _login_imap_for_account(acct, readonly=False)
+    try:
+        _status, data = mail.search(None, "UNSEEN")
+        if not data or not data[0]:
+            return 0
+        uids = [u.decode() if isinstance(u, bytes) else str(u) for u in data[0].split()]
+        if not uids:
+            return 0
+        marked = 0
+        for uid in uids:
+            status, _ = mail.store(uid, "+FLAGS", "\\Seen")
+            if status == "OK":
+                marked += 1
+        return marked
+    except imaplib.IMAP4.error as e:
+        raise RuntimeError(
+            format_imap_error(e, provider=str(acct.get("provider") or "mail"))
+        ) from e
+    finally:
+        try:
+            mail.logout()
+        except Exception:
+            pass
 
 
 # --- DB-backed accounts ---

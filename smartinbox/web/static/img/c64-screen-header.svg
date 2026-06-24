@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 40" role="img" aria-label="Commodore 64 screen header">
+  <rect width="480" height="40" fill="#40318d"/>
+  <rect y="0" width="480" height="2" fill="#7878e8"/>
+  <rect y="38" width="480" height="2" fill="#7878e8"/>
+  <text x="240" y="16" text-anchor="middle" fill="#7878e8" font-family="monospace" font-size="11" font-weight="700" letter-spacing="2">**** SMARTINBOX 64  MAIL SUMMARY ****</text>
+  <text x="240" y="30" text-anchor="middle" fill="#a9a2f0" font-family="monospace" font-size="9">64K RAM SYSTEM  38911 BASIC BYTES FREE</text>
+</svg>

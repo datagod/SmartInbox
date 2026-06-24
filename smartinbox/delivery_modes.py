@@ -508,6 +508,36 @@ PLAYFUL_PHRASES: tuple[str, ...] = (
 )
 
 
+def all_delivery_phrases() -> list[dict[str, str]]:
+    """Return every standalone delivery phrase for TTS pre-generation."""
+    items: list[dict[str, str]] = []
+    for text in CONSPIRACY_PHRASES:
+        items.append({"mode": "conspiracy", "text": text})
+    for text in NEUROTIC_PHRASES:
+        items.append({"mode": "neurotic", "text": text})
+    for text in PLAYFUL_PHRASES:
+        items.append({"mode": "playful", "text": text})
+    return items
+
+
+def spoken_delivery_phrase(
+    phrase: str,
+    mode: str,
+    *,
+    tts_model: str | None = None,
+) -> str:
+    """Text to send to Chatterbox for a standalone delivery phrase."""
+    text = (phrase or "").strip()
+    if not text:
+        return text
+    delivery = normalize_delivery_mode(mode)
+    if delivery == "conspiracy":
+        return maybe_decorate_conspiracy_phrase(text, base_text=text, tts_model=tts_model)
+    if delivery == "neurotic":
+        return maybe_decorate_neurotic_phrase(text, base_text=text, tts_model=tts_model)
+    return text
+
+
 def normalize_delivery_mode(value: Any) -> str:
     mode = str(value or "normal").strip().lower()
     return mode if mode in DELIVERY_MODES else "normal"
@@ -617,6 +647,26 @@ NAME_GREETING_TEMPLATES: tuple[str, ...] = (
     "Hello {name}",
     "Attention {name}",
     "{name}, may I have your attention please!",
+    "Attention good sir {name}",
+    "Attention good {name}",
+    "Pardon the interruption, {name}",
+    "A moment of your time, {name}",
+    "Dear {name}",
+    "Heads up, {name}",
+    "{name}, urgent mail incoming",
+    "{name}, incoming transmission",
+    "Message for {name}",
+    "Mail for {name}",
+    "News for {name}",
+    "{name}, you have mail",
+    "If I may, {name}",
+    "Kind attention, {name}",
+    "Your attention please, {name}",
+    "Reporting for {name}",
+    "Good morrow, {name}",
+    "A word if you please, {name}",
+    "{name}, something has arrived",
+    "{name}, fresh mail for you",
 )
 
 

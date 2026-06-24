@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 28" role="img" aria-label="Commodore 64 status line">
+  <rect width="480" height="28" fill="#40318d"/>
+  <rect y="0" width="480" height="2" fill="#5858b0"/>
+  <text x="12" y="19" fill="#7878e8" font-family="monospace" font-size="10" font-weight="700">READY.</text>
+  <text x="468" y="19" text-anchor="end" fill="#a9a2f0" font-family="monospace" font-size="9">RUN/STOP  RESTORE</text>
+</svg>

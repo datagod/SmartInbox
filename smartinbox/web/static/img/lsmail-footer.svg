@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 48" role="img" aria-label="Leisure Suit Mailman status bar">
+  <rect width="480" height="48" fill="#000055"/>
+  <rect y="0" width="480" height="3" fill="#ff55ff"/>
+  <rect y="45" width="480" height="3" fill="#55ffff"/>
+  <!-- envelope lives -->
+  <g transform="translate(12,10)" fill="#ffff55">
+    <rect x="0" y="4" width="14" height="10" fill="none" stroke="#ffff55" stroke-width="2"/>
+    <rect x="0" y="4" width="14" height="5" fill="#ffff55" opacity="0.4"/>
+    <rect x="18" y="4" width="14" height="10" fill="none" stroke="#ffff55" stroke-width="2"/>
+    <rect x="18" y="4" width="14" height="5" fill="#ffff55" opacity="0.4"/>
+    <rect x="36" y="4" width="14" height="10" fill="none" stroke="#55ffff" stroke-width="2"/>
+    <rect x="36" y="4" width="14" height="5" fill="#55ffff" opacity="0.3"/>
+  </g>
+  <text x="68" y="22" fill="#ffffff" font-family="monospace" font-size="9" font-weight="bold">MAIL: 3</text>
+  <text x="140" y="22" fill="#ffff55" font-family="monospace" font-size="9">SCORE: INBOX</text>
+  <!-- command prompt -->
+  <rect x="8" y="28" width="464" height="16" fill="#0000aa"/>
+  <text x="16" y="39" fill="#55ffff" font-family="monospace" font-size="10" font-weight="bold">&gt; READ MAIL</text>
+  <text x="360" y="39" fill="#ff55ff" font-family="monospace" font-size="8">F1 HELP  ESC QUIT</text>
+</svg>
