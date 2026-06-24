@@ -36,7 +36,7 @@ def chatterbox_settings_from_config(raw: dict[str, Any] | None) -> dict[str, Any
         "base_url": str(cfg.get("base_url", "http://host.docker.internal:8004")).rstrip("/"),
         "voice_mode": str(cfg.get("voice_mode", "clone")),
         "reference_audio_filename": str(
-            cfg.get("reference_audio_filename", "JLC_William_McEvoy.mp3")
+            cfg.get("reference_audio_filename", "")
         ).strip(),
         "predefined_voice_id": str(cfg.get("predefined_voice_id", "")).strip(),
         "output_format": str(cfg.get("output_format", "wav")).lower(),

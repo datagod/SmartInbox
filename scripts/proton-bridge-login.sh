@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if ! command -v protonmail-bridge >/dev/null 2>&1; then
   echo "protonmail-bridge is not installed."
-  echo "Run: sudo /home/bill/SmartInbox/scripts/install-proton-bridge.sh"
+  echo "Run: sudo ${SCRIPT_DIR}/install-proton-bridge.sh"
   exit 1
 fi
 
@@ -16,7 +16,7 @@ fi
 
 KEY_ID="$(gpg --list-secret-keys --keyid-format LONG 2>/dev/null | awk '/^sec/ {print $2}' | cut -d/ -f2 | head -1)"
 if [[ -z "${KEY_ID}" ]]; then
-  echo "No GPG key found. Run: sudo ${SCRIPT_DIR:-/home/bill/SmartInbox/scripts}/install-proton-bridge.sh"
+  echo "No GPG key found. Run: sudo ${SCRIPT_DIR}/install-proton-bridge.sh"
   exit 1
 fi
 FPR="$(gpg --list-keys --keyid-format LONG "${KEY_ID}" 2>/dev/null | awk '/^pub/ {getline; print $1; exit}')"

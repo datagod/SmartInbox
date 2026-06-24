@@ -20,7 +20,7 @@ chatterbox_tts:
   enabled: true
   base_url: http://127.0.0.1:8004
   voice_mode: clone
-  reference_audio_filename: kryten2.mp3
+  reference_audio_filename: reference.wav   # MP3/WAV in Chatterbox reference-audio directory
   predefined_voice_id: ""
   output_format: wav
   split_text: true

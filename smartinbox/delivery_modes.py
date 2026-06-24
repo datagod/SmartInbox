@@ -305,7 +305,7 @@ NEUROTIC_PHRASES: tuple[str, ...] = (
     "I need to lie down after this!",
     "This email has haunted energy!",
     "I'm one notification away from a full meltdown!",
-    # Kryten-style panicky mechanoid follow-ups
+    # Panicky mechanoid follow-ups
     "Oh my goodness, sir!",
     "I'm terribly sorry about this!",
     "My servos are trembling, sir!",
@@ -349,7 +349,7 @@ NEUROTIC_PHRASES: tuple[str, ...] = (
     "My optimism circuits have gone offline, sir!",
     "I appear to have lost the thread of rational thought!",
     "Sir, this is precisely the sort of thing I warned about!",
-    # Kryten-style short outbursts
+    # Short outbursts
     "Sir!",
     "Oh dear!",
     "Most irregular!",

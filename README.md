@@ -165,7 +165,7 @@ python3 -m venv .venv
 
 ### Clone voice reference file
 
-SmartInbox defaults to **clone** mode with a reference audio file name from `config.yaml` (example: `kryten2.mp3`). Place your reference MP3/WAV in the Chatterbox server’s reference-audio directory (see that project’s docs), or change `reference_audio_filename` in `config.yaml` to match a file Chatterbox already has.
+SmartInbox defaults to **clone** mode with a reference audio file name from `config.yaml` (for example `reference.wav`). Place your reference MP3/WAV in the Chatterbox server’s reference-audio directory (see that project’s docs), or change `reference_audio_filename` in `config.yaml` to match a file Chatterbox already has.
 
 ### Run Chatterbox
 
@@ -317,7 +317,7 @@ chatterbox_tts:
   enabled: true
   base_url: http://127.0.0.1:8004
   voice_mode: clone              # or predefined
-  reference_audio_filename: kryten2.mp3
+  reference_audio_filename: reference.wav
   cache_dir: localrecordings
   alerts_enabled: true
   alert_cooldown: 120
