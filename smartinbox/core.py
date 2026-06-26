@@ -62,6 +62,7 @@ from smartinbox.db import (
     mark_email_alerted,
     set_email_starred,
     set_setting,
+    update_email_spam,
     update_email_summary,
     upsert_email,
 )
@@ -98,6 +99,7 @@ from smartinbox.email_summary import (
     resolve_system_prompt,
     summarize_email,
 )
+from smartinbox.email_spam import classify_email_spam
 from smartinbox.voice_summary import (
     brief_summary_for_tts,
     default_voice_style_prompt,
@@ -2060,6 +2062,41 @@ class SmartInboxCore:
         except Exception as e:
             self.add_log(f"Calendar extract failed — {subject}: {e}", "warning")
 
+    async def _classify_email_spam(self, msg: dict[str, Any]) -> bool | None:
+        """Return True if spam, False if not, None if check failed."""
+        email_id = str(msg.get("id") or "")
+        if not email_id:
+            return None
+        subject = self._log_subject(str(msg.get("subject") or "(no subject)"))
+        is_spam, err = await classify_email_spam(
+            base_url=self.get_ollama_base_url(),
+            model=self.get_ollama_model(),
+            sender=str(msg.get("sender") or ""),
+            subject=str(msg.get("subject") or ""),
+            body=str(msg.get("body_text") or msg.get("snippet") or ""),
+            summary=str(
+                msg.get("summary_detailed") or msg.get("summary_short") or ""
+            ).strip()
+            or None,
+            timeout=min(60.0, self.get_ollama_timeout()),
+        )
+        if err:
+            self.add_log(
+                f"Spam check failed for {subject} (voice alert allowed): {err}",
+                "warning",
+            )
+            return None
+        update_email_spam(self._conn, email_id, is_spam=bool(is_spam))
+        msg["is_spam"] = 1 if is_spam else 0
+        if is_spam:
+            self.add_log(
+                f"Spam check: junk — no voice alert for {subject}",
+                "info",
+            )
+        else:
+            self.add_log(f"Spam check: not spam — {subject}", "info")
+        return bool(is_spam)
+
     async def _process_new_email(self, msg: dict[str, Any]) -> None:
         subject = str(msg.get("subject") or "(no subject)")
         try:
@@ -2085,6 +2122,10 @@ class SmartInboxCore:
                 self._notify_emails()
             elif err:
                 self.add_log(f"Summary failed: {err}", "warning")
+
+            is_spam = await self._classify_email_spam(msg)
+            if is_spam:
+                return
 
             if self._email_passes_watermark(msg):
                 alert = await self._build_alert(msg)
@@ -2520,6 +2561,12 @@ class SmartInboxCore:
             return None
         row = get_email(self._conn, str(msg.get("id") or ""))
         if row and row.get("alerted_at"):
+            return None
+        if row and row.get("is_spam"):
+            self.add_log("Alert skipped (classified as spam)", "info")
+            return None
+        if msg.get("is_spam"):
+            self.add_log("Alert skipped (classified as spam)", "info")
             return None
         now = time.time()
         sender = str(msg.get("sender") or "")

@@ -80,6 +80,7 @@ def build_demo_emails() -> list[dict[str, Any]]:
             ),
             "alerted_at": None,
             "starred": 0,
+            "is_spam": 1,
         },
         {
             "id": "demo-003",

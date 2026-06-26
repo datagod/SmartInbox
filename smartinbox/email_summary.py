@@ -7,16 +7,22 @@ from typing import Any
 import httpx
 
 DEFAULT_SYSTEM = """You summarize incoming email for a busy homeowner.
-Be concise and factual. Use only information from the email.
+Be thorough and factual. Use only information from the email — do not invent details.
 Return markdown with:
 ## Summary
-2-3 sentences.
+A clear paragraph of 4-6 sentences covering who sent it, what it is about, and anything time-sensitive.
 
 ## Key points
-- bullet list (2-5 items)
+- bullet list (5-8 items)
+- Each bullet should be a full sentence with specific details: names, dates, amounts, deadlines, links, or requests from the email.
 
 ## Action needed
-yes/no and one short line if yes."""
+yes or no, and one short line explaining what to do if yes."""
+
+
+def build_summary_ollama_options() -> dict[str, Any]:
+    """Ollama runtime options for email summaries (see Ollama API `options`)."""
+    return {"num_predict": 2048}
 
 
 def default_system_prompt() -> str:
@@ -62,13 +68,14 @@ async def summarize_email(
 ) -> tuple[str | None, str | None]:
     """Call Ollama /api/chat. Returns (markdown, error)."""
     url = f"{base_url.rstrip('/')}/api/chat"
-    payload = {
+    payload: dict[str, Any] = {
         "model": model,
         "messages": [
             {"role": "system", "content": resolve_system_prompt(system_prompt)},
             {"role": "user", "content": build_prompt(sender, subject, body)},
         ],
         "stream": False,
+        "options": build_summary_ollama_options(),
     }
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:

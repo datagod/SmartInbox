@@ -269,6 +269,26 @@ body.inbox-keyboard-nav .email-item.selected {
 .email-item.is-expanded { border-bottom: none; }
 .email-item.junk { opacity: 0.72; }
 .email-item.junk .email-subject { color: var(--muted); }
+.email-item.spam-likely {
+  background: color-mix(in srgb, var(--error) 8%, transparent);
+  box-shadow: inset 2px 0 0 color-mix(in srgb, var(--error) 22%, transparent);
+}
+.email-item.spam-likely .email-subject {
+  color: color-mix(in srgb, var(--text) 82%, var(--muted));
+}
+.email-item.spam-likely:hover {
+  background: color-mix(in srgb, var(--error) 11%, transparent);
+}
+.email-item.spam-likely.selected {
+  background: color-mix(in srgb, var(--error) 13%, var(--surface2));
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--error) 50%, var(--muted));
+}
+body.inbox-keyboard-nav .email-item.spam-likely:hover:not(.selected) {
+  background: color-mix(in srgb, var(--error) 8%, transparent);
+}
+body.inbox-keyboard-nav .email-item.spam-likely.selected {
+  background: color-mix(in srgb, var(--error) 13%, var(--surface2));
+}
 .email-item:last-child:not(.is-expanded) { border-bottom: none; }
 .email-item-body { flex: 1; min-width: 0; }
 .email-item-actions {

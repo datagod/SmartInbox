@@ -74,6 +74,7 @@ def _ensure_email_account_columns(conn: sqlite3.Connection) -> None:
         ("provider", "ALTER TABLE emails ADD COLUMN provider TEXT"),
         ("starred", "ALTER TABLE emails ADD COLUMN starred INTEGER NOT NULL DEFAULT 0"),
         ("calendar_ics", "ALTER TABLE emails ADD COLUMN calendar_ics TEXT"),
+        ("is_spam", "ALTER TABLE emails ADD COLUMN is_spam INTEGER"),
     ):
         if name not in cols:
             conn.execute(ddl)
@@ -175,6 +176,16 @@ def set_email_starred(
     )
     conn.commit()
     return cur.rowcount > 0
+
+
+def update_email_spam(
+    conn: sqlite3.Connection, email_id: str, *, is_spam: bool
+) -> None:
+    conn.execute(
+        "UPDATE emails SET is_spam = ? WHERE id = ?",
+        (1 if is_spam else 0, email_id),
+    )
+    conn.commit()
 
 
 def mark_email_alerted(conn: sqlite3.Connection, email_id: str) -> None:

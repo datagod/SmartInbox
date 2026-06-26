@@ -201,6 +201,10 @@
     return Boolean(email && (email.starred === 1 || email.starred === true));
   }
 
+  function isSpamLikely(email) {
+    return Boolean(email && (email.is_spam === 1 || email.is_spam === true));
+  }
+
   async function starEmail(emailId) {
     const res = await fetch(`/api/emails/${encodeURIComponent(emailId)}/star`, {
       method: 'POST',
@@ -408,6 +412,7 @@
         const starred = isStarred(e);
         const score = senderScore(e.sender);
         const junk = score < 0 ? ' junk' : '';
+        const spam = isSpamLikely(e) ? ' spam-likely' : '';
         const imp = starred || isImportantSender(e.sender) ? ' important' : '';
         const badge = starred
           ? '<span class="star-badge" title="Starred">★</span> '
@@ -418,7 +423,7 @@
         const lastVote = senderLastVote(e.sender);
         const upActive = lastVote === 'up' ? ' vote-active' : '';
         const downActive = lastVote === 'down' ? ' vote-active' : '';
-        return `<div class="email-item${sel}${imp}${starred ? ' starred' : ''}${junk}" data-id="${escapeHtml(e.id)}" tabindex="-1">
+        return `<div class="email-item${sel}${imp}${starred ? ' starred' : ''}${junk}${spam}" data-id="${escapeHtml(e.id)}" tabindex="-1">
           <div class="email-votes" role="group" aria-label="Rate sender">
             <button type="button" class="vote-btn vote-up${upActive}" data-vote="up" title="Interested in this sender" aria-label="Upvote sender">▲</button>
             <button type="button" class="vote-btn vote-down${downActive}" data-vote="down" title="Mark sender as junk" aria-label="Downvote sender">▼</button>
