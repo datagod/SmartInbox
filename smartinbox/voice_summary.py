@@ -6,8 +6,11 @@ import re
 
 import httpx
 
+from smartinbox.important_senders import sanitize_text_for_tts
+
 DEFAULT_VOICE_STYLE_PROMPT = (
-    "Give a very brief summary of the email, one sentence max."
+    "Give a very brief summary of the email, one sentence max. "
+    "Do not include email addresses."
 )
 
 
@@ -51,7 +54,7 @@ def brief_summary_for_tts(markdown: str, *, max_len: int = 450) -> str:
         if " " in cut:
             cut = cut.rsplit(" ", 1)[0]
         text = cut + "…"
-    return text
+    return sanitize_text_for_tts(text)
 
 
 async def style_summary_for_voice(
@@ -92,5 +95,5 @@ async def style_summary_for_voice(
     content = (data.get("message") or {}).get("content")
     if not content or not str(content).strip():
         return None, "Ollama returned empty styled summary"
-    spoken = re.sub(r"\s+", " ", str(content).strip())
+    spoken = sanitize_text_for_tts(re.sub(r"\s+", " ", str(content).strip()))
     return spoken, None

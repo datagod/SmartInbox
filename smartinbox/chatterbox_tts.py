@@ -13,6 +13,7 @@ from smartinbox.chatterbox_models import (
     normalize_tts_model,
 )
 from smartinbox.delivery_modes import apply_delivery_mode, normalize_delivery_mode
+from smartinbox.important_senders import sanitize_text_for_tts
 from smartinbox.tts_recording_cache import (
     load_cached_recording,
     media_type_for_filename,
@@ -214,7 +215,7 @@ async def list_chatterbox_voices(settings: dict[str, Any]) -> dict[str, list[dic
 
 async def synthesize_speech(text: str, *, settings: dict[str, Any]) -> tuple[bytes, str]:
     """Call Chatterbox POST /tts; return (audio_bytes, media_type)."""
-    message = (text or "").strip()
+    message = sanitize_text_for_tts(text)
     if not message:
         raise ValueError("Text is required.")
 
@@ -277,6 +278,7 @@ async def get_or_synthesize_speech(
 
     Uses localrecordings when a matching file already exists; otherwise calls Chatterbox and saves.
     """
+    text = sanitize_text_for_tts(text)
     async with _lock_for_recording(text, settings=settings):
         cached = load_cached_recording(text, settings=settings)
         if cached is not None:

@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SmartInbox — Search</title>
+  <link rel="stylesheet" href="/static/css/styles.css?v=16">
+</head>
+<body>
+  <div class="set-app search-app">
+    <div class="set-layout">
+      <div class="set-main">
+        <header class="header">
+          <h1>SmartInbox</h1>
+          <p class="subtitle">Search — find stored mail locally</p>
+          <nav class="site-nav" aria-label="Site">
+            <a href="/">Inbox</a>
+            <a href="/search" aria-current="page">Search</a>
+            <a href="/settings">Settings</a>
+            <a href="/llm">LLM</a>
+            <a href="/phrases">Phrases</a>
+            <a href="/senders">Senders</a>
+            <a href="/calendar">Calendar</a>
+            <a href="/process">Process</a>
+            <a href="/storage">Storage</a>
+          </nav>
+        </header>
+
+        <section class="set-panel">
+          <h2>Search stored emails</h2>
+          <p class="set-hint">
+            Searches subject, sender, body, and summaries in your local database. Use
+            <strong>Add to calendar</strong> to extract dates from a message with Ollama.
+            Click a result to view the <strong>original email</strong>.
+            <strong>Remove from results</strong> hides a hit for this search only — it does not delete mail.
+          </p>
+          <form class="search-form" id="search-form" role="search">
+            <label class="search-field">
+              <span class="sr-only">Search query</span>
+              <input
+                type="search"
+                class="set-input search-query-input"
+                id="search-query"
+                placeholder="Search subject, sender, body…"
+                autocomplete="off"
+                spellcheck="false"
+              >
+            </label>
+            <button type="submit" class="btn btn-primary" id="btn-search">Search</button>
+            <button type="button" class="btn btn-secondary" id="btn-clear-search">Clear</button>
+          </form>
+          <p class="search-status" id="search-status"></p>
+          <div class="search-results" id="search-results">
+            <p class="search-empty">Enter a query to search stored mail.</p>
+          </div>
+        </section>
+
+      </div>
+
+      <div class="set-activity-shell set-activity-shell--full" id="set-activity-shell" data-activity-scope="search">
+        <div
+          class="set-activity-resizer set-activity-resizer--width"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize activity log width"
+          tabindex="0"
+          title="Drag to resize width · double-click to reset"
+        ></div>
+        <aside class="set-activity-panel panel activity-log-panel">
+          <div class="panel-head">
+            <h2>Activity Log</h2>
+            <button type="button" class="btn btn-secondary btn-small" id="btn-clear-search-activity-log">Clear</button>
+          </div>
+          <div class="log-scroll" id="search-activity-log"></div>
+          <div
+            class="set-activity-resizer set-activity-resizer--height"
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Resize activity log height"
+            tabindex="0"
+            title="Drag to resize height · double-click to reset"
+          ></div>
+          <div
+            class="set-activity-resizer set-activity-resizer--corner"
+            role="separator"
+            aria-label="Resize activity log width and height"
+            tabindex="0"
+            title="Drag corner to resize width and height · double-click to reset"
+          ></div>
+        </aside>
+      </div>
+    </div>
+  </div>
+  <script src="/static/js/activity-log-resize.js?v=4"></script>
+  <script src="/static/js/search.js?v=4"></script>
+</body>
+</html>

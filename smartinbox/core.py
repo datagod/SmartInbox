@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import time
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
@@ -20,7 +20,27 @@ from smartinbox.chatterbox_tts import (
     list_chatterbox_voices,
 )
 from smartinbox.config import data_dir
-from smartinbox.demo_data import build_demo_emails
+from smartinbox.calendar_events import (
+    count_emails_by_provider,
+    format_provider_counts,
+    calendar_extraction_event_count,
+    is_email_extracted,
+    list_calendar_events,
+    list_emails_for_calendar_scan,
+    mark_email_extracted,
+    record_event_vote,
+    reset_calendar_data_for_emails,
+    upsert_calendar_event,
+)
+from smartinbox.calendar_extract import (
+    build_calendar_ollama_options,
+    extract_calendar_events,
+    preload_ollama_model,
+)
+from smartinbox.calendar_body import parse_body_calendar_events, parse_summary_calendar_events
+from smartinbox.calendar_ics import parse_ics_calendar_events
+from smartinbox.demo_data import build_demo_calendar_events, build_demo_emails
+from smartinbox.email_search import search_demo_emails, search_stored_emails
 from smartinbox.prompt_storage import (
     delete_prompt_file,
     ensure_default_prompt_file,
@@ -45,6 +65,7 @@ from smartinbox.db import (
     update_email_summary,
     upsert_email,
 )
+from smartinbox.storage_stats import get_storage_stats
 from smartinbox.sender_interest import (
     is_sender_muted,
     list_ranked_sender_interest,
@@ -61,6 +82,7 @@ from smartinbox.important_senders import (
     normalize_important_alert_mode,
     normalize_other_alert_mode,
     remove_important_sender,
+    sanitize_text_for_tts,
 )
 from smartinbox.delivery_modes import (
     DELIVERY_MODES,
@@ -84,6 +106,7 @@ from smartinbox.voice_summary import (
     style_summary_for_voice,
 )
 from smartinbox.imap_mail import (
+    fetch_messages_since_for_account_record,
     fetch_unread_for_account_record,
     gmail_connection,
     list_imap_account_records,
@@ -130,6 +153,7 @@ class SmartInboxCore:
         self.timezone = str(s.get("timezone", "America/New_York"))
         self.gmail_config: dict[str, Any] = dict(s.get("gmail") or {})
         self.ollama_config: dict[str, Any] = dict(s.get("ollama") or {})
+        self.calendar_config: dict[str, Any] = dict(s.get("calendar") or {})
         self.chatterbox_tts_config = chatterbox_settings_from_config(s.get("chatterbox_tts"))
         # SmartInbox-specific keys on chatterbox config
         self.chatterbox_tts_config["alerts_enabled"] = bool(
@@ -160,6 +184,14 @@ class SmartInboxCore:
             if saved_model and str(saved_model).strip()
             else str(self.ollama_config.get("model", "qwen2.5:3b"))
         )
+        default_concurrency = int(self.calendar_config.get("extract_concurrency", 6))
+        saved_concurrency = get_setting(self._conn, "calendar_extract_concurrency")
+        try:
+            concurrency = int(saved_concurrency) if saved_concurrency is not None else default_concurrency
+        except (TypeError, ValueError):
+            concurrency = default_concurrency
+        self._calendar_extract_concurrency = max(1, min(32, concurrency))
+        self._calendar_ollama_main_gpu = self._load_calendar_ollama_main_gpu()
         saved_prompt = get_setting(self._conn, "summary_system_prompt")
         self._summary_system_prompt = (
             str(saved_prompt).strip()
@@ -219,6 +251,29 @@ class SmartInboxCore:
         self._demo_emails: list[dict[str, Any]] = (
             copy.deepcopy(build_demo_emails()) if self._demo_mode else []
         )
+        self._demo_calendar_events: list[dict[str, Any]] = (
+            copy.deepcopy(build_demo_calendar_events(timezone=self.timezone))
+            if self._demo_mode
+            else []
+        )
+        self._calendar_backfill: dict[str, Any] = {
+            "running": False,
+            "done": 0,
+            "total": 0,
+        }
+        self._calendar_backfill_task: asyncio.Task[None] | None = None
+        self._mail_fetch_job: dict[str, Any] = {
+            "running": False,
+            "done": 0,
+            "total": 0,
+            "lookback": 5,
+            "unit": "days",
+            "days": 5,
+            "hours": None,
+            "phase": "fetch",
+        }
+        self._mail_fetch_task: asyncio.Task[None] | None = None
+        self._mail_fetch_lock = asyncio.Lock()
 
         self.log_entries: list[dict[str, str]] = []
         self._max_log_entries = 500
@@ -244,6 +299,31 @@ class SmartInboxCore:
         task = asyncio.create_task(coro)
         self._email_tasks.add(task)
         task.add_done_callback(self._email_tasks.discard)
+
+    def _load_calendar_ollama_main_gpu(self) -> int | None:
+        saved = get_setting(self._conn, "calendar_ollama_main_gpu")
+        if saved is None:
+            cfg = self.calendar_config.get("ollama_main_gpu")
+            if cfg is None or cfg == "":
+                return None
+            try:
+                return max(0, min(15, int(cfg)))
+            except (TypeError, ValueError):
+                return None
+        try:
+            gpu = int(saved)
+        except (TypeError, ValueError):
+            return None
+        if gpu < 0:
+            return None
+        return max(0, min(15, gpu))
+
+    @staticmethod
+    def _log_subject(subject: str | None, *, max_len: int = 56) -> str:
+        text = (subject or "(no subject)").strip()
+        if len(text) <= max_len:
+            return text
+        return text[: max_len - 1].rstrip() + "…"
 
     def add_log(self, message: str, level: str = "info") -> None:
         try:
@@ -321,6 +401,783 @@ class SmartInboxCore:
     def get_ranked_sender_interest(self) -> dict[str, list[dict[str, Any]]]:
         return list_ranked_sender_interest(self._conn)
 
+    def _calendar_tz(self) -> ZoneInfo:
+        return ZoneInfo(self.timezone)
+
+    def _parse_anchor_date(self, anchor_date: str | None) -> datetime:
+        tz = self._calendar_tz()
+        if anchor_date:
+            try:
+                parts = anchor_date.strip().split("-")
+                year, month, day = int(parts[0]), int(parts[1]), int(parts[2])
+                return datetime(year, month, day, tzinfo=tz)
+            except (ValueError, IndexError):
+                pass
+        return datetime.now(tz=tz)
+
+    def _calendar_week_bounds(
+        self, anchor: datetime | None = None
+    ) -> tuple[float, float, datetime, datetime]:
+        tz = self._calendar_tz()
+        now = anchor or datetime.now(tz=tz)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=tz)
+        monday = now - timedelta(days=now.weekday())
+        monday = monday.replace(hour=0, minute=0, second=0, microsecond=0)
+        week_end = monday + timedelta(days=7)
+        return monday.timestamp(), week_end.timestamp(), monday, week_end
+
+    def _events_for_day(
+        self,
+        events: list[dict[str, Any]],
+        day_start: datetime,
+    ) -> list[dict[str, Any]]:
+        day_end = day_start + timedelta(days=1)
+        start_ts = day_start.timestamp()
+        end_ts = day_end.timestamp()
+        return [
+            e
+            for e in events
+            if start_ts <= float(e["event_start"]) < end_ts
+        ]
+
+    def _build_week_period(
+        self, anchor: datetime, today: date
+    ) -> dict[str, Any]:
+        week_start, week_end, monday, week_end_dt = self._calendar_week_bounds(anchor)
+        week_events = self._list_calendar_events_for_display(
+            start_ts=week_start,
+            end_ts=week_end,
+            include_hidden=False,
+        )
+        days: list[dict[str, Any]] = []
+        for offset in range(7):
+            day_start_dt = monday + timedelta(days=offset)
+            day_events = self._events_for_day(week_events, day_start_dt)
+            days.append(
+                {
+                    "date": day_start_dt.date().isoformat(),
+                    "label": day_start_dt.strftime("%a %b %-d"),
+                    "weekday": day_start_dt.strftime("%a"),
+                    "day_num": day_start_dt.day,
+                    "is_today": day_start_dt.date() == today,
+                    "events": day_events,
+                }
+            )
+        return {
+            "label": (
+                f"{monday.strftime('%b %-d')} – "
+                f"{(week_end_dt - timedelta(days=1)).strftime('%b %-d, %Y')}"
+            ),
+            "start": week_start,
+            "end": week_end,
+            "days": days,
+        }
+
+    def _build_month_period(
+        self, anchor: datetime, today: date
+    ) -> dict[str, Any]:
+        first = anchor.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        if first.month == 12:
+            next_month = first.replace(year=first.year + 1, month=1)
+        else:
+            next_month = first.replace(month=first.month + 1)
+        last = next_month - timedelta(days=1)
+        grid_start = first - timedelta(days=first.weekday())
+        grid_end = last + timedelta(days=6 - last.weekday())
+        grid_end_exclusive = grid_end + timedelta(days=1)
+        month_events = self._list_calendar_events_for_display(
+            start_ts=grid_start.timestamp(),
+            end_ts=grid_end_exclusive.timestamp(),
+            include_hidden=False,
+        )
+        weeks: list[dict[str, Any]] = []
+        cursor = grid_start
+        while cursor <= grid_end:
+            week_days: list[dict[str, Any]] = []
+            for offset in range(7):
+                day_start_dt = cursor + timedelta(days=offset)
+                day_events = self._events_for_day(month_events, day_start_dt)
+                week_days.append(
+                    {
+                        "date": day_start_dt.date().isoformat(),
+                        "label": day_start_dt.strftime("%a %b %-d"),
+                        "day_num": day_start_dt.day,
+                        "in_month": day_start_dt.month == first.month,
+                        "is_today": day_start_dt.date() == today,
+                        "events": day_events,
+                    }
+                )
+            weeks.append({"days": week_days})
+            cursor += timedelta(days=7)
+        return {
+            "label": first.strftime("%B %Y"),
+            "month": first.month,
+            "year": first.year,
+            "start": grid_start.timestamp(),
+            "end": grid_end_exclusive.timestamp(),
+            "weekday_labels": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+            "weeks": weeks,
+        }
+
+    def _build_day_period(
+        self, anchor: datetime, today: date
+    ) -> dict[str, Any]:
+        day_start = anchor.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end = day_start + timedelta(days=1)
+        day_events = self._list_calendar_events_for_display(
+            start_ts=day_start.timestamp(),
+            end_ts=day_end.timestamp(),
+            include_hidden=False,
+        )
+        return {
+            "date": day_start.date().isoformat(),
+            "label": day_start.strftime("%A, %B %-d, %Y"),
+            "short_label": day_start.strftime("%a %b %-d"),
+            "start": day_start.timestamp(),
+            "end": day_end.timestamp(),
+            "is_today": day_start.date() == today,
+            "events": day_events,
+        }
+
+    def _list_calendar_events_for_display(
+        self,
+        *,
+        start_ts: float,
+        end_ts: float,
+        include_hidden: bool = True,
+    ) -> list[dict[str, Any]]:
+        if self._demo_mode:
+            events = [
+                dict(row)
+                for row in self._demo_calendar_events
+                if float(row["event_start"]) >= start_ts
+                and float(row["event_start"]) < end_ts
+                and (include_hidden or not row.get("hidden"))
+            ]
+            events.sort(key=lambda e: (float(e["event_start"]), e.get("title") or ""))
+            return events
+        return list_calendar_events(
+            self._conn,
+            start_ts=start_ts,
+            end_ts=end_ts,
+            include_hidden=include_hidden,
+        )
+
+    def get_calendar_view(
+        self,
+        *,
+        list_days: int = 30,
+        view_mode: str = "week",
+        anchor_date: str | None = None,
+    ) -> dict[str, Any]:
+        mode = (view_mode or "week").strip().lower()
+        if mode not in ("week", "month", "day"):
+            mode = "week"
+        anchor = self._parse_anchor_date(anchor_date)
+        tz = self._calendar_tz()
+        today = datetime.now(tz=tz).date()
+        if mode == "month":
+            period = self._build_month_period(anchor, today)
+        elif mode == "day":
+            period = self._build_day_period(anchor, today)
+        else:
+            period = self._build_week_period(anchor, today)
+        list_days = max(1, min(int(list_days), 365))
+        list_start = time.time() - list_days * 86400
+        list_end = time.time() + 90 * 86400
+        all_events = self._list_calendar_events_for_display(
+            start_ts=list_start,
+            end_ts=list_end,
+            include_hidden=True,
+        )
+        mail = mail_accounts_status(self._conn)
+        return {
+            "view_mode": mode,
+            "anchor": anchor.date().isoformat(),
+            "period": period,
+            "week": period if mode == "week" else None,
+            "events": all_events,
+            "list_days": list_days,
+            "backfill": dict(self._calendar_backfill),
+            "extract_concurrency": self.get_calendar_extract_concurrency(),
+            "calendar_ollama_main_gpu": self.get_calendar_ollama_main_gpu(),
+            "mail_accounts": mail.get("accounts") or [],
+            "demo_mode": self._demo_mode,
+        }
+
+    def vote_calendar_event(self, event_id: str, *, vote: str) -> dict[str, Any] | None:
+        if self._demo_mode:
+            for index, row in enumerate(self._demo_calendar_events):
+                if str(row.get("id")) == event_id:
+                    direction = vote.strip().lower()
+                    if direction not in ("up", "down"):
+                        raise ValueError("vote must be 'up' or 'down'")
+                    up = int(row.get("upvotes") or 0)
+                    down = int(row.get("downvotes") or 0)
+                    if direction == "up":
+                        up += 1
+                        hidden = False
+                    else:
+                        down += 1
+                        hidden = True
+                    updated = {
+                        **row,
+                        "upvotes": up,
+                        "downvotes": down,
+                        "score": up - down,
+                        "last_vote": direction,
+                        "hidden": hidden,
+                        "updated_at": time.time(),
+                    }
+                    self._demo_calendar_events[index] = updated
+                    label = "Upvoted" if direction == "up" else "Downvoted"
+                    self.add_log(
+                        f"{label} calendar event: {updated.get('title')} (score {updated['score']:+d})",
+                        "info",
+                    )
+                    return {"event_id": event_id, "interest": updated}
+            return None
+        try:
+            entry = record_event_vote(self._conn, event_id, vote=vote)
+        except ValueError:
+            return None
+        label = "Upvoted" if vote == "up" else "Downvoted"
+        self.add_log(
+            f"{label} calendar event: {entry.get('title')} (score {entry['score']:+d})",
+            "info",
+        )
+        return {"event_id": event_id, "interest": entry}
+
+    async def _extract_calendar_for_email(
+        self,
+        msg: dict[str, Any],
+        *,
+        index: int | None = None,
+        total: int | None = None,
+    ) -> int:
+        email_id = str(msg.get("id") or "")
+        if not email_id:
+            return 0
+        provider = str(msg.get("provider") or "mail").strip().lower() or "mail"
+        provider_label = {"gmail": "Gmail", "proton": "Proton"}.get(
+            provider, provider.title()
+        )
+        subject = self._log_subject(str(msg.get("subject") or ""))
+        sender = str(msg.get("sender") or "")
+        mail_subject = str(msg.get("subject") or "")
+        progress = f"[{index}/{total}] " if index is not None and total is not None else ""
+        ref_ts = float(msg.get("received_at") or time.time())
+
+        ics_text = str(msg.get("calendar_ics") or "").strip()
+        if not ics_text and not self._demo_mode:
+            row = get_email(self._conn, email_id)
+            if row:
+                ics_text = str(row.get("calendar_ics") or "").strip()
+
+        events: list[dict[str, Any]] = []
+        err: str | None = None
+        source = ""
+
+        if ics_text:
+            events = parse_ics_calendar_events(
+                ics_text,
+                email_id=email_id,
+                sender=sender,
+                subject=mail_subject,
+                timezone=self.timezone,
+            )
+            if events:
+                source = "ICS invite"
+            elif ics_text:
+                self.add_log(
+                    f"Calendar ICS {progress}{provider_label}: could not parse invite — {subject}",
+                    "warning",
+                )
+
+        body_text = str(msg.get("body_text") or msg.get("snippet") or "")
+        if not events and body_text:
+            events = parse_body_calendar_events(
+                body_text,
+                email_id=email_id,
+                sender=sender,
+                subject=mail_subject,
+                timezone=self.timezone,
+            )
+            if events:
+                source = "body date"
+
+        if not events:
+            summary_text = str(
+                msg.get("summary_detailed") or msg.get("summary_short") or ""
+            ).strip()
+            if not summary_text and not self._demo_mode:
+                row = get_email(self._conn, email_id)
+                if row:
+                    summary_text = str(
+                        row.get("summary_detailed") or row.get("summary_short") or ""
+                    ).strip()
+            if summary_text:
+                events = parse_summary_calendar_events(
+                    summary_text,
+                    email_id=email_id,
+                    sender=sender,
+                    subject=mail_subject,
+                    timezone=self.timezone,
+                )
+                if events:
+                    source = "summary date"
+
+        if not events:
+            events, err = await extract_calendar_events(
+                base_url=self.get_ollama_base_url(),
+                model=self.get_ollama_model(),
+                email_id=email_id,
+                sender=sender,
+                subject=mail_subject,
+                body=body_text,
+                reference_ts=ref_ts,
+                timezone=self.timezone,
+                timeout=self.get_ollama_timeout(),
+                ollama_options=self.get_calendar_ollama_options(),
+                keep_alive="30m",
+            )
+            if events:
+                source = "Ollama"
+
+        saved = 0
+        for event in events:
+            upsert_calendar_event(self._conn, event)
+            saved += 1
+        mark_email_extracted(self._conn, email_id, event_count=saved)
+        if saved:
+            via = f" ({source})" if source else ""
+            self.add_log(
+                f"Calendar extract {progress}{provider_label}: "
+                f"found {saved} event{'s' if saved != 1 else ''}{via} — {subject}",
+                "info",
+            )
+        elif err:
+            self.add_log(
+                f"Calendar extract {progress}{provider_label} failed — {subject}: {err}",
+                "warning",
+            )
+        else:
+            self.add_log(
+                f"Calendar extract {progress}{provider_label}: no dates — {subject}",
+                "info",
+            )
+        return saved
+
+    async def import_mail_from_sources(self, days: int) -> dict[str, int]:
+        """Pull mail from connected IMAP accounts into the local DB for calendar scanning."""
+        stats = {
+            "accounts": 0,
+            "fetched": 0,
+            "new": 0,
+            "existing": 0,
+            "filtered": 0,
+        }
+        accounts = list_imap_account_records(self._conn)
+        if not accounts:
+            self.add_log("Calendar import: no mail accounts connected", "warning")
+            return stats
+        days = max(1, min(int(days), 365))
+        since_ts = time.time() - days * 86400
+        max_fetch = min(2000, max(100, days * 40))
+        self.add_log(
+            f"Calendar import: checking {len(accounts)} connected account"
+            f"{'s' if len(accounts) != 1 else ''} (last {days} day{'s' if days != 1 else ''}, "
+            f"up to {max_fetch} messages each)",
+            "info",
+        )
+        for acct in accounts:
+            provider = str(acct.get("provider") or "mail").strip().lower() or "mail"
+            provider_label = {"gmail": "Gmail", "proton": "Proton"}.get(
+                provider, provider.title()
+            )
+            email_addr = str(acct.get("email") or "").strip() or "unknown"
+            self.add_log(
+                f"Calendar import ({provider_label}): connecting to {email_addr}…",
+                "info",
+            )
+            try:
+                messages = await asyncio.to_thread(
+                    fetch_messages_since_for_account_record,
+                    acct,
+                    since_days=days,
+                    max_results=max_fetch,
+                )
+            except Exception as e:
+                self.add_log(f"Calendar import ({provider_label}) failed: {e}", "error")
+                continue
+            stats["accounts"] += 1
+            stats["fetched"] += len(messages)
+            new_for_acct = 0
+            existing_for_acct = 0
+            filtered_for_acct = 0
+            for msg in messages:
+                received = float(msg.get("received_at") or 0)
+                if received > 0 and received < since_ts:
+                    filtered_for_acct += 1
+                    stats["filtered"] += 1
+                    continue
+                result = self._persist_imported_email(msg)
+                if result == "new":
+                    new_for_acct += 1
+                    stats["new"] += 1
+                    self._queue_stored_mail_processing(msg, result)
+                elif result == "ics_updated":
+                    self._queue_stored_mail_processing(msg, result)
+                else:
+                    existing_for_acct += 1
+                    stats["existing"] += 1
+            self.add_log(
+                f"Calendar import ({provider_label}): done — {new_for_acct} new, "
+                f"{existing_for_acct} already stored, {filtered_for_acct} outside window, "
+                f"{len(messages)} fetched from server",
+                "info",
+            )
+        return stats
+
+    def _normalize_mail_fetch_lookback(
+        self, *, days: int | None = None, hours: int | None = None
+    ) -> tuple[int, str, int, str]:
+        if hours is not None:
+            hours = max(1, min(int(hours), 8760))
+            since_seconds = hours * 3600
+            label = f"{hours} hour{'s' if hours != 1 else ''}"
+            return since_seconds, "hours", hours, label
+        days = max(1, min(int(days or 5), 365))
+        since_seconds = days * 86400
+        label = f"{days} day{'s' if days != 1 else ''}"
+        return since_seconds, "days", days, label
+
+    async def run_mail_fetch(self, *, days: int | None = None, hours: int | None = None) -> None:
+        """Re-fetch mail from IMAP for the lookback window and store new messages normally."""
+        if self._demo_mode or self._mail_fetch_job.get("running"):
+            return
+        since_seconds, unit, lookback, lookback_label = self._normalize_mail_fetch_lookback(
+            days=days, hours=hours
+        )
+        since_ts = time.time() - since_seconds
+        max_fetch = min(2000, max(100, ((since_seconds + 86399) // 86400) * 40))
+        self._mail_fetch_job = {
+            "running": True,
+            "done": 0,
+            "total": 0,
+            "lookback": lookback,
+            "unit": unit,
+            "days": lookback if unit == "days" else None,
+            "hours": lookback if unit == "hours" else None,
+            "phase": "fetch",
+            "by_provider": {},
+        }
+        stats = {
+            "accounts": 0,
+            "fetched": 0,
+            "new": 0,
+            "existing": 0,
+            "filtered": 0,
+        }
+        try:
+            accounts = list_imap_account_records(self._conn)
+            if not accounts:
+                self.add_log("Mail fetch: no mail accounts connected", "warning")
+                return
+            self.add_log(
+                f"Mail fetch started: re-fetch from {len(accounts)} connected account"
+                f"{'s' if len(accounts) != 1 else ''} (last {lookback_label}, "
+                f"up to {max_fetch} messages each)",
+                "info",
+            )
+            pending: list[dict[str, Any]] = []
+            for acct in accounts:
+                provider = str(acct.get("provider") or "mail").strip().lower() or "mail"
+                provider_label = {"gmail": "Gmail", "proton": "Proton"}.get(
+                    provider, provider.title()
+                )
+                email_addr = str(acct.get("email") or "").strip() or "unknown"
+                self._mail_fetch_job["phase"] = "fetch"
+                self.add_log(
+                    f"Mail fetch ({provider_label}): connecting to {email_addr}…",
+                    "info",
+                )
+                try:
+                    messages = await asyncio.to_thread(
+                        fetch_messages_since_for_account_record,
+                        acct,
+                        since_seconds=since_seconds,
+                        max_results=max_fetch,
+                    )
+                except Exception as e:
+                    self.add_log(f"Mail fetch ({provider_label}) failed: {e}", "error")
+                    continue
+                stats["accounts"] += 1
+                stats["fetched"] += len(messages)
+                for msg in messages:
+                    msg["provider"] = msg.get("provider") or provider
+                    pending.append(msg)
+                self.add_log(
+                    f"Mail fetch ({provider_label}): received {len(messages)} message"
+                    f"{'s' if len(messages) != 1 else ''} from server",
+                    "info",
+                )
+            in_window: list[dict[str, Any]] = []
+            for msg in pending:
+                received = float(msg.get("received_at") or 0)
+                if received > 0 and received < since_ts:
+                    stats["filtered"] += 1
+                    continue
+                in_window.append(msg)
+            total = len(in_window)
+            by_provider = count_emails_by_provider(in_window)
+            self._mail_fetch_job.update(
+                {
+                    "phase": "store",
+                    "total": total,
+                    "done": 0,
+                    "by_provider": by_provider,
+                }
+            )
+            if total == 0:
+                self.add_log(
+                    f"Mail fetch: no messages in the last {lookback_label}",
+                    "info",
+                )
+                self.add_log("Mail fetch complete: 0 messages stored", "info")
+                return
+            provider_summary = format_provider_counts(by_provider)
+            inbox_note = f" — {provider_summary}" if provider_summary else ""
+            self.add_log(
+                f"Mail fetch: storing {total} message{'s' if total != 1 else ''}"
+                f"{inbox_note} in local database",
+                "info",
+            )
+            for i, msg in enumerate(in_window):
+                provider = str(msg.get("provider") or "mail").strip().lower() or "mail"
+                result = self._persist_imported_email(msg)
+                if result in ("new", "ics_updated"):
+                    if result == "new":
+                        stats["new"] += 1
+                    else:
+                        stats["existing"] += 1
+                    self._log_import_result(msg, result, provider=provider)
+                    self._queue_stored_mail_processing(msg, result)
+                else:
+                    stats["existing"] += 1
+                self._mail_fetch_job["done"] = i + 1
+            self.add_log(
+                f"Mail fetch complete: {stats['new']} new, {stats['existing']} already stored, "
+                f"{stats['filtered']} outside window, {stats['fetched']} fetched from "
+                f"{stats['accounts']} account{'s' if stats['accounts'] != 1 else ''}",
+                "info",
+            )
+        finally:
+            snap = dict(self._mail_fetch_job)
+            self._mail_fetch_job = {
+                "running": False,
+                "done": snap.get("done", 0),
+                "total": snap.get("total", 0),
+                "lookback": snap.get("lookback", lookback),
+                "unit": snap.get("unit", unit),
+                "days": snap.get("days"),
+                "hours": snap.get("hours"),
+                "phase": "done",
+                "by_provider": snap.get("by_provider") or {},
+            }
+
+    def mail_fetch_running(self) -> bool:
+        return bool(self._mail_fetch_job.get("running"))
+
+    def start_mail_fetch(self, *, days: int | None = None, hours: int | None = None) -> bool:
+        if self._demo_mode:
+            return False
+        if self._mail_fetch_job.get("running"):
+            return False
+        if self._mail_fetch_task and not self._mail_fetch_task.done():
+            return False
+
+        async def _run() -> None:
+            if self._mail_fetch_lock.locked():
+                return
+            async with self._mail_fetch_lock:
+                await self.run_mail_fetch(days=days, hours=hours)
+
+        self._mail_fetch_task = asyncio.create_task(_run())
+        return True
+
+    def get_process_view(self) -> dict[str, Any]:
+        mail = mail_accounts_status(self._conn)
+        return {
+            "demo_mode": self._demo_mode,
+            "mail_accounts": mail.get("accounts") or [],
+            "fetch": dict(self._mail_fetch_job),
+        }
+
+    def get_storage_view(self) -> dict[str, Any]:
+        stats = get_storage_stats(self._conn, self._db_path)
+        mail = mail_accounts_status(self._conn)
+        return {
+            "demo_mode": self._demo_mode,
+            "connected_accounts": mail.get("accounts") or [],
+            "stats": stats,
+        }
+
+    async def backfill_calendar_events(
+        self, *, days: int = 5, force: bool = False, import_from_source: bool = False
+    ) -> None:
+        if self._demo_mode or self._calendar_backfill.get("running"):
+            return
+        days = max(1, min(int(days), 365))
+        self._calendar_backfill = {
+            "running": True,
+            "done": 0,
+            "total": 0,
+            "days": days,
+            "force": force,
+            "by_provider": {},
+            "phase": "import" if import_from_source else "scan",
+        }
+        import_stats: dict[str, int] = {}
+        events_found = 0
+        try:
+            if import_from_source and force:
+                mode = "import from mail sources and re-extract dates"
+            elif import_from_source:
+                mode = "import from mail sources and extract dates"
+            elif force:
+                mode = "re-extract dates from local mail"
+            else:
+                mode = "extract dates from local mail"
+            self.add_log(
+                f"Calendar process started: {mode} (last {days} day{'s' if days != 1 else ''})",
+                "info",
+            )
+            if import_from_source:
+                import_stats = await self.import_mail_from_sources(days)
+                self.add_log(
+                    f"Calendar import complete: {import_stats['new']} new, "
+                    f"{import_stats['existing']} already stored, "
+                    f"{import_stats['filtered']} outside window, "
+                    f"{import_stats['fetched']} fetched from "
+                    f"{import_stats['accounts']} account"
+                    f"{'s' if import_stats['accounts'] != 1 else ''}",
+                    "info",
+                )
+            since_ts = time.time() - days * 86400
+            self.add_log(
+                f"Calendar scan: loading emails from local database "
+                f"(since {days} day{'s' if days != 1 else ''} ago)…",
+                "info",
+            )
+            to_scan = list_emails_for_calendar_scan(
+                self._conn,
+                since_ts=since_ts,
+                pending_only=not force,
+            )
+            if force and to_scan:
+                self.add_log(
+                    f"Calendar scan: clearing prior extraction for {len(to_scan)} email"
+                    f"{'s' if len(to_scan) != 1 else ''} before re-processing",
+                    "info",
+                )
+                reset_calendar_data_for_emails(
+                    self._conn, [str(msg["id"]) for msg in to_scan]
+                )
+            total = len(to_scan)
+            by_provider = count_emails_by_provider(to_scan)
+            provider_summary = format_provider_counts(by_provider)
+            label = "re-processing" if force else "processing"
+            self._calendar_backfill.update(
+                {
+                    "phase": "scan",
+                    "done": 0,
+                    "total": total,
+                    "by_provider": by_provider,
+                }
+            )
+            if total == 0:
+                self.add_log(
+                    f"Calendar scan: no emails in the last {days} day{'s' if days != 1 else ''} "
+                    f"(all connected inboxes)",
+                    "info",
+                )
+                self.add_log("Calendar process complete: 0 emails scanned, 0 events found", "info")
+                return
+            inbox_note = f" — {provider_summary}" if provider_summary else ""
+            model = self.get_ollama_model()
+            batch_size = self.get_calendar_extract_concurrency()
+            gpu = self.get_calendar_ollama_main_gpu()
+            await self._preload_calendar_ollama_model()
+            gpu_note = f", GPU {gpu}" if gpu is not None else ""
+            self.add_log(
+                f"Calendar scan: {label} {total} email{'s' if total != 1 else ''}"
+                f"{inbox_note} with Ollama model {model}{gpu_note} "
+                f"({batch_size} parallel extraction{'s' if batch_size != 1 else ''})",
+                "info",
+            )
+            for i in range(0, total, batch_size):
+                batch = to_scan[i : i + batch_size]
+                results = await asyncio.gather(
+                    *(
+                        self._extract_calendar_for_email(
+                            dict(msg), index=i + j + 1, total=total
+                        )
+                        for j, msg in enumerate(batch)
+                    )
+                )
+                events_found += sum(results)
+                done = min(i + len(batch), total)
+                self._calendar_backfill["done"] = done
+                self.add_log(
+                    f"Calendar extract: {done}/{total} emails done "
+                    f"({events_found} event{'s' if events_found != 1 else ''} found so far)",
+                    "info",
+                )
+            done_note = f" ({provider_summary})" if provider_summary else ""
+            summary_parts = [
+                f"{total} email{'s' if total != 1 else ''} scanned",
+                f"{events_found} event{'s' if events_found != 1 else ''} found",
+            ]
+            if import_stats.get("new"):
+                summary_parts.append(
+                    f"{import_stats['new']} new email{'s' if import_stats['new'] != 1 else ''} imported"
+                )
+            self.add_log(
+                f"Calendar process complete{done_note}: {', '.join(summary_parts)}",
+                "info",
+            )
+        finally:
+            snap = dict(self._calendar_backfill)
+            self._calendar_backfill = {
+                "running": False,
+                "done": snap.get("done", 0),
+                "total": snap.get("total", 0),
+                "days": days,
+                "force": force,
+                "by_provider": snap.get("by_provider") or {},
+            }
+
+    def calendar_scan_running(self) -> bool:
+        return bool(self._calendar_backfill.get("running"))
+
+    def start_calendar_backfill(
+        self, *, days: int = 5, force: bool = False, import_from_source: bool = False
+    ) -> bool:
+        if self._demo_mode:
+            return False
+        if self._calendar_backfill.get("running"):
+            return False
+        if self._calendar_backfill_task and not self._calendar_backfill_task.done():
+            return False
+        self._calendar_backfill_task = asyncio.create_task(
+            self.backfill_calendar_events(
+                days=days, force=force, import_from_source=import_from_source
+            )
+        )
+        return True
+
     def vote_email_sender(self, email_id: str, *, vote: str) -> dict[str, Any] | None:
         row = self.get_email_for_display(email_id)
         if row is None:
@@ -339,12 +1196,16 @@ class SmartInboxCore:
         set_setting(self._conn, "demo_mode", "1" if self._demo_mode else "0")
         if self._demo_mode:
             self._demo_emails = copy.deepcopy(build_demo_emails())
+            self._demo_calendar_events = copy.deepcopy(
+                build_demo_calendar_events(timezone=self.timezone)
+            )
             self.add_log(
                 "Demo mode enabled — inbox shows sample emails for screenshots",
                 "info",
             )
         else:
             self._demo_emails = []
+            self._demo_calendar_events = []
             self.add_log("Demo mode disabled — showing live inbox", "info")
         self._notify_emails()
         return self._demo_mode
@@ -361,6 +1222,62 @@ class SmartInboxCore:
                     return dict(row)
             return None
         return get_email(self._conn, email_id)
+
+    def search_emails(
+        self,
+        query: str,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        if self._demo_mode:
+            results, total = search_demo_emails(
+                self._demo_emails,
+                query,
+                limit=limit,
+                offset=offset,
+            )
+        else:
+            results, total = search_stored_emails(
+                self._conn,
+                query,
+                limit=limit,
+                offset=offset,
+            )
+        return {
+            "query": (query or "").strip(),
+            "results": results,
+            "total": total,
+            "limit": max(1, min(int(limit), 200)),
+            "offset": max(0, int(offset)),
+            "demo_mode": self._demo_mode,
+        }
+
+    async def extract_calendar_for_email_id(
+        self,
+        email_id: str,
+        *,
+        force: bool = False,
+    ) -> dict[str, Any]:
+        if self._demo_mode:
+            return {
+                "email_id": email_id,
+                "events_found": 0,
+                "demo_mode": True,
+                "message": "Calendar extraction is disabled in demo mode",
+            }
+        msg = get_email(self._conn, email_id)
+        if msg is None:
+            raise ValueError("email not found")
+        if force:
+            reset_calendar_data_for_emails(self._conn, [email_id])
+        events_found = await self._extract_calendar_for_email(msg)
+        return {
+            "email_id": email_id,
+            "events_found": events_found,
+            "calendar_extracted": True,
+            "subject": msg.get("subject"),
+        }
 
     def _update_demo_email(self, email_id: str, **fields: Any) -> dict[str, Any] | None:
         for index, row in enumerate(self._demo_emails):
@@ -663,6 +1580,74 @@ class SmartInboxCore:
         set_setting(self._conn, "ollama_model", name)
         return self._ollama_model
 
+    def get_calendar_extract_concurrency(self) -> int:
+        return self._calendar_extract_concurrency
+
+    def get_calendar_ollama_main_gpu(self) -> int | None:
+        return self._calendar_ollama_main_gpu
+
+    def get_calendar_ollama_options(self) -> dict[str, Any]:
+        return build_calendar_ollama_options(main_gpu=self._calendar_ollama_main_gpu)
+
+    def set_calendar_ollama_main_gpu(self, value: int | float | str | None) -> int | None:
+        if value is None or value == "" or str(value).strip().lower() == "auto":
+            self._calendar_ollama_main_gpu = None
+            set_setting(self._conn, "calendar_ollama_main_gpu", -1)
+            self.add_log("Calendar Ollama GPU set to auto (Ollama scheduler)", "info")
+            return None
+        try:
+            gpu = int(value)
+        except (TypeError, ValueError):
+            raise ValueError("GPU index must be an integer") from None
+        if gpu < 0:
+            self._calendar_ollama_main_gpu = None
+            set_setting(self._conn, "calendar_ollama_main_gpu", -1)
+            self.add_log("Calendar Ollama GPU set to auto (Ollama scheduler)", "info")
+            return None
+        self._calendar_ollama_main_gpu = max(0, min(15, gpu))
+        set_setting(self._conn, "calendar_ollama_main_gpu", self._calendar_ollama_main_gpu)
+        self.add_log(
+            f"Calendar Ollama GPU set to GPU {self._calendar_ollama_main_gpu}",
+            "info",
+        )
+        return self._calendar_ollama_main_gpu
+
+    async def _preload_calendar_ollama_model(self) -> None:
+        model = self.get_ollama_model()
+        options = self.get_calendar_ollama_options()
+        gpu = self.get_calendar_ollama_main_gpu()
+        if gpu is not None:
+            self.add_log(
+                f"Calendar: loading {model} on GPU {gpu} for event extraction…",
+                "info",
+            )
+        else:
+            self.add_log(f"Calendar: loading {model} for event extraction…", "info")
+        err = await preload_ollama_model(
+            base_url=self.get_ollama_base_url(),
+            model=model,
+            options=options,
+            keep_alive="30m",
+            timeout=self.get_ollama_timeout(),
+        )
+        if err:
+            self.add_log(f"Calendar Ollama preload failed: {err}", "warning")
+        elif gpu is not None:
+            self.add_log(f"Calendar: {model} ready on GPU {gpu}", "info")
+
+    def set_calendar_extract_concurrency(self, value: int | float | str) -> int:
+        try:
+            n = int(value)
+        except (TypeError, ValueError):
+            raise ValueError("concurrency must be an integer") from None
+        self._calendar_extract_concurrency = max(1, min(32, n))
+        set_setting(self._conn, "calendar_extract_concurrency", self._calendar_extract_concurrency)
+        self.add_log(
+            f"Calendar extract concurrency set to {self._calendar_extract_concurrency}",
+            "info",
+        )
+        return self._calendar_extract_concurrency
+
     def get_default_summary_system_prompt(self) -> str:
         return default_system_prompt()
 
@@ -787,6 +1772,10 @@ class SmartInboxCore:
                 "tts_model": self.get_event_tts_model(),
                 "alert_template": self.chatterbox_tts_config.get("alert_template"),
             },
+            "calendar": {
+                "extract_concurrency": self.get_calendar_extract_concurrency(),
+                "ollama_main_gpu": self.get_calendar_ollama_main_gpu(),
+            },
             "ollama": {
                 "base_url": self.get_ollama_base_url(),
                 "model": self.get_ollama_model(),
@@ -817,6 +1806,7 @@ class SmartInboxCore:
                 "warning",
             )
         self._poll_task = asyncio.create_task(self._poll_loop())
+        self.start_calendar_backfill(days=30)
 
     async def stop(self) -> None:
         self._running = False
@@ -827,6 +1817,20 @@ class SmartInboxCore:
             except asyncio.CancelledError:
                 pass
             self._poll_task = None
+        if self._calendar_backfill_task:
+            self._calendar_backfill_task.cancel()
+            try:
+                await self._calendar_backfill_task
+            except asyncio.CancelledError:
+                pass
+            self._calendar_backfill_task = None
+        if self._mail_fetch_task:
+            self._mail_fetch_task.cancel()
+            try:
+                await self._mail_fetch_task
+            except asyncio.CancelledError:
+                pass
+            self._mail_fetch_task = None
 
     async def _poll_loop(self) -> None:
         while self._running:
@@ -836,49 +1840,114 @@ class SmartInboxCore:
                 self.add_log(f"Poll error: {e}", "error")
             await asyncio.sleep(self._poll_interval)
 
-    async def poll_inbox(self) -> int:
+    async def poll_inbox(self, *, detailed: bool = False) -> int:
         if self._poll_lock.locked():
+            if detailed:
+                self.add_log("Inbox check — already running", "warning")
             return 0
         async with self._poll_lock:
-            return await self._poll_inbox_locked()
+            return await self._poll_inbox_locked(detailed=detailed)
 
-    async def _poll_inbox_locked(self) -> int:
+    async def _poll_inbox_locked(self, *, detailed: bool = False) -> int:
         accounts = list_imap_account_records(self._conn)
         if not accounts:
             self._last_poll_at = time.time()
+            if detailed:
+                self.add_log("Inbox check — no mail accounts connected", "warning")
             return 0
         max_fetch = int(self.gmail_config.get("max_fetch", 20))
         self._last_poll_at = time.time()
         new_count = 0
         skipped_old = 0
+        existing_count = 0
+        ics_updated_count = 0
+        if detailed:
+            if self._inbox_watermark:
+                stamp = self._format_log_timestamp(self._inbox_watermark)
+                cutoff = f"only mail received after {stamp}"
+            else:
+                cutoff = "no cutoff date (all unread mail eligible)"
+            self.add_log(
+                f"Inbox check started: {len(accounts)} connected account"
+                f"{'s' if len(accounts) != 1 else ''}, up to {max_fetch} unread each — {cutoff}",
+                "info",
+            )
         for acct in accounts:
-            label = acct.get("provider", "mail")
+            provider = str(acct.get("provider") or "mail").strip().lower() or "mail"
+            provider_label = {"gmail": "Gmail", "proton": "Proton"}.get(
+                provider, provider.title()
+            )
+            email_addr = str(acct.get("email") or "").strip() or "unknown"
+            if detailed:
+                self.add_log(
+                    f"Inbox check ({provider_label}): connecting to {email_addr}…",
+                    "info",
+                )
             try:
                 raw_messages = await asyncio.to_thread(
                     fetch_unread_for_account_record, acct, max_results=max_fetch
                 )
             except Exception as e:
-                self.add_log(f"{label} poll failed: {e}", "error")
+                self.add_log(f"Inbox check ({provider_label}) failed: {e}", "error")
                 continue
+            if detailed:
+                unread_n = len(raw_messages)
+                self.add_log(
+                    f"Inbox check ({provider_label}): {unread_n} unread message"
+                    f"{'s' if unread_n != 1 else ''} on server",
+                    "info",
+                )
+            acct_new = 0
+            acct_existing = 0
+            acct_ics = 0
+            acct_skipped = 0
             skipped_uids: list[str] = []
             for msg in raw_messages:
                 if not self._email_passes_watermark(msg):
                     skipped_old += 1
+                    acct_skipped += 1
                     uid = str(msg.get("imap_uid") or "").strip()
                     if uid:
                         skipped_uids.append(uid)
+                    if detailed:
+                        subject = self._log_subject(str(msg.get("subject") or "(no subject)"))
+                        sender = str(msg.get("sender") or "unknown sender")
+                        self.add_log(
+                            f"Inbox check ({provider_label}): skipped before cutoff — "
+                            f"{sender} — {subject}",
+                            "info",
+                        )
                     continue
-                if not upsert_email(self._conn, msg):
+                result = self._persist_imported_email(msg)
+                if result == "existing":
+                    existing_count += 1
+                    acct_existing += 1
+                    if detailed:
+                        subject = self._log_subject(str(msg.get("subject") or "(no subject)"))
+                        sender = str(msg.get("sender") or "unknown sender")
+                        self.add_log(
+                            f"Inbox check ({provider_label}): already stored — {sender} — {subject}",
+                            "info",
+                        )
                     continue
-                new_count += 1
-                provider = msg.get("provider") or label
+                msg_provider = msg.get("provider") or provider
+                if result == "new":
+                    new_count += 1
+                    acct_new += 1
+                elif result == "ics_updated":
+                    ics_updated_count += 1
+                    acct_ics += 1
+                self._log_import_result(msg, result, provider=msg_provider)
+                self._queue_stored_mail_processing(msg, result)
+
+            if detailed:
                 self.add_log(
-                    f"New email ({provider}): {msg.get('sender')} — {msg.get('subject')}",
+                    f"Inbox check ({provider_label}): account done — {acct_new} new, "
+                    f"{acct_existing} already stored"
+                    + (f", {acct_ics} calendar ICS updated" if acct_ics else "")
+                    + (f", {acct_skipped} before cutoff" if acct_skipped else ""),
                     "info",
                 )
-                if not self._demo_mode:
-                    self._notify_emails()
-                    self._track_email_task(self._process_new_email(dict(msg)))
 
             if skipped_uids:
                 try:
@@ -891,16 +1960,105 @@ class SmartInboxCore:
                     if marked:
                         self.add_log(
                             f"Marked {marked} old unread message{'s' if marked != 1 else ''} "
-                            f"as read on {label}",
+                            f"as read on {provider_label} ({email_addr})",
                             "info",
                         )
                 except asyncio.TimeoutError:
-                    self.add_log(f"Mark seen timed out ({label})", "warning")
+                    self.add_log(
+                        f"Mark seen timed out ({provider_label}: {email_addr})",
+                        "warning",
+                    )
                 except Exception as e:
-                    self.add_log(f"Mark seen failed ({label}): {e}", "warning")
+                    self.add_log(
+                        f"Mark seen failed ({provider_label}: {email_addr}): {e}",
+                        "warning",
+                    )
 
+        if detailed and (existing_count or ics_updated_count):
+            extras: list[str] = []
+            if existing_count:
+                extras.append(
+                    f"{existing_count} already stored email"
+                    f"{'s' if existing_count != 1 else ''}"
+                )
+            if ics_updated_count:
+                extras.append(
+                    f"{ics_updated_count} calendar ICS update"
+                    f"{'s' if ics_updated_count != 1 else ''}"
+                )
+            self.add_log(f"Inbox check: {', '.join(extras)}", "info")
         self._log_inbox_check(new_count=new_count, skipped_old=skipped_old)
         return new_count
+
+    def _persist_imported_email(self, msg: dict[str, Any]) -> str:
+        """Store an imported message and keep calendar_ics on the in-memory row."""
+        result = upsert_email(self._conn, msg)
+        email_id = str(msg.get("id") or "")
+        if email_id:
+            row = get_email(self._conn, email_id)
+            if row and str(row.get("calendar_ics") or "").strip():
+                msg["calendar_ics"] = row["calendar_ics"]
+        return result
+
+    def _log_import_result(self, msg: dict[str, Any], result: str, *, provider: str) -> None:
+        subject = str(msg.get("subject") or "(no subject)")
+        has_ics = bool(str(msg.get("calendar_ics") or "").strip())
+        if result == "new":
+            if has_ics:
+                self.add_log(
+                    f"New email ({provider}): {msg.get('sender')} — {subject} "
+                    f"(calendar invite ICS stored)",
+                    "info",
+                )
+            else:
+                self.add_log(
+                    f"New email ({provider}): {msg.get('sender')} — {subject}",
+                    "info",
+                )
+        elif result == "ics_updated":
+            self.add_log(
+                f"Calendar invite ICS stored ({provider}): {subject}",
+                "info",
+            )
+
+    def _message_has_calendar_ics(self, msg: dict[str, Any]) -> bool:
+        if str(msg.get("calendar_ics") or "").strip():
+            return True
+        email_id = str(msg.get("id") or "")
+        if not email_id or self._demo_mode:
+            return False
+        row = get_email(self._conn, email_id)
+        return bool(row and str(row.get("calendar_ics") or "").strip())
+
+    def _queue_stored_mail_processing(self, msg: dict[str, Any], upsert_result: str) -> None:
+        if self._demo_mode:
+            return
+        stored = dict(msg)
+        if upsert_result in ("new", "ics_updated"):
+            self._track_email_task(self._process_new_email_calendar(stored))
+        if upsert_result == "new":
+            self._notify_emails()
+            self._track_email_task(self._process_new_email(stored))
+
+    async def _process_new_email_calendar(self, msg: dict[str, Any]) -> None:
+        if self._demo_mode:
+            return
+        email_id = str(msg.get("id") or "")
+        if not email_id:
+            return
+        has_ics = self._message_has_calendar_ics(msg)
+        prior_count = calendar_extraction_event_count(self._conn, email_id)
+        if prior_count is not None and prior_count > 0 and not has_ics:
+            return
+        subject = self._log_subject(str(msg.get("subject") or "(no subject)"))
+        try:
+            if has_ics and prior_count is not None:
+                reset_calendar_data_for_emails(self._conn, [email_id])
+            elif prior_count == 0:
+                reset_calendar_data_for_emails(self._conn, [email_id])
+            await self._extract_calendar_for_email(msg)
+        except Exception as e:
+            self.add_log(f"Calendar extract failed — {subject}: {e}", "warning")
 
     async def _process_new_email(self, msg: dict[str, Any]) -> None:
         subject = str(msg.get("subject") or "(no subject)")
@@ -1086,6 +2244,8 @@ class SmartInboxCore:
                 delivery,
                 tts_model=tts_model,
             )
+        base_text = sanitize_text_for_tts(base_text)
+        spoken = sanitize_text_for_tts(spoken)
         debug["spoken_text"] = spoken
         return base_text, spoken, debug
 

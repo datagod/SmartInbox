@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Antonio:wght@400;700&family=Chakra+Petch:wght@500;700&family=M+PLUS+Rounded+1c:wght@400;700&family=Orbitron:wght@500;700&family=Press+Start+2P&family=Share+Tech+Mono&family=Zen+Maru+Gothic:wght@400;700&display=swap');
 
 /* Summary viewport + markdown base */
 .summary-panel .panel-head {
@@ -2962,5 +2962,2468 @@
 
 .theme-macintosh .summary-body.summary-loading .markdown-body,
 .theme-macintosh .summary-body.summary-error .markdown-body {
+  display: none;
+}
+
+/* --- Mail Trek — TNG LCARS --- */
+.mailtrek-lcars-header,
+.mailtrek-lcars-footer {
+  display: none;
+}
+
+.summary-crt-chassis:has(.theme-mailtrek) {
+  background: linear-gradient(180deg, #1a1a1a 0%, #0a0a0a 55%, #141414 100%);
+  border-radius: 18px 4px 18px 4px;
+  padding: 0.55rem 0.7rem 0.5rem;
+  box-shadow:
+    inset 0 0 0 2px #2a2a2a,
+    0 12px 32px rgba(0, 0, 0, 0.65);
+  border: 2px solid #111;
+}
+
+.summary-crt-chassis:has(.theme-mailtrek) .crt-bezel-top,
+.summary-crt-chassis:has(.theme-mailtrek) .crt-bezel-bottom {
+  background: #0d0d0d;
+  border-color: #222;
+  border-radius: 14px 3px 14px 3px;
+}
+
+.summary-crt-chassis:has(.theme-mailtrek) .crt-nameplate {
+  border: none;
+  background: transparent;
+  box-shadow: none;
+}
+
+.summary-crt-chassis:has(.theme-mailtrek) .crt-sony {
+  font-size: 0;
+}
+
+.summary-crt-chassis:has(.theme-mailtrek) .crt-sony::after {
+  content: 'USS ENTERPRISE NCC-1701-D';
+  font-family: Antonio, 'Arial Narrow', sans-serif;
+  font-size: 0.5rem;
+  font-weight: 700;
+  color: #ff9900;
+  letter-spacing: 0.18em;
+}
+
+.summary-crt-chassis:has(.theme-mailtrek) .crt-rgb-bars {
+  gap: 0.35rem;
+}
+
+.summary-crt-chassis:has(.theme-mailtrek) .crt-rgb-r { background: #cc6666; }
+.summary-crt-chassis:has(.theme-mailtrek) .crt-rgb-g { background: #99ccff; }
+.summary-crt-chassis:has(.theme-mailtrek) .crt-rgb-b { background: #ff9900; }
+
+.summary-crt-chassis:has(.theme-mailtrek) .crt-power-led {
+  background: #ff9900;
+  box-shadow: 0 0 8px rgba(255, 153, 0, 0.75);
+}
+
+.summary-crt-chassis:has(.theme-mailtrek) .crt-power-label {
+  color: #ffcc99;
+  letter-spacing: 0.14em;
+}
+
+.summary-crt-chassis:has(.theme-mailtrek) .crt-screen-well {
+  border-radius: 0 0 0 28px;
+  overflow: hidden;
+}
+
+.summary-viewport.theme-mailtrek {
+  display: flex;
+  flex-direction: column;
+  border: none;
+  border-radius: 0 0 0 24px;
+  background: #000;
+  padding: 0;
+  box-shadow: inset 0 0 48px rgba(153, 204, 255, 0.04);
+  overflow: hidden;
+}
+
+.theme-mailtrek .mailtrek-lcars-header,
+.theme-mailtrek .mailtrek-lcars-footer {
+  display: block;
+  flex-shrink: 0;
+  font-family: Antonio, 'Arial Narrow', 'Helvetica Neue', sans-serif;
+  user-select: none;
+  pointer-events: none;
+}
+
+.theme-mailtrek .mt-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.28rem;
+  min-height: 1.35rem;
+}
+
+.theme-mailtrek .mt-row-primary {
+  padding: 0.45rem 0.5rem 0.3rem;
+  background: #000;
+}
+
+.theme-mailtrek .mt-row-secondary {
+  padding: 0 0.5rem 0.35rem;
+  background: #000;
+}
+
+.theme-mailtrek .mt-row-footer {
+  padding: 0.35rem 0.5rem 0.45rem;
+  background: #000;
+  align-items: center;
+}
+
+.theme-mailtrek .mt-cap {
+  flex-shrink: 0;
+  width: 1.1rem;
+  background: #ff9900;
+}
+
+.theme-mailtrek .mt-cap-left {
+  border-radius: 999px 0 0 999px;
+}
+
+.theme-mailtrek .mt-cap-right {
+  border-radius: 0 999px 999px 0;
+  background: #cc6666;
+}
+
+.theme-mailtrek .mt-bar {
+  flex-shrink: 0;
+  min-height: 1.15rem;
+  border-radius: 999px;
+}
+
+.theme-mailtrek .mt-bar-wide {
+  flex: 1.4;
+  min-width: 2.5rem;
+  background: #ff9900;
+}
+
+.theme-mailtrek .mt-bar-mid {
+  width: 3.2rem;
+  background: #ffcc99;
+}
+
+.theme-mailtrek .mt-bar-short {
+  width: 2.4rem;
+  background: #cc6666;
+}
+
+.theme-mailtrek .mt-bar-grow {
+  flex: 1;
+  min-width: 2rem;
+  background: #99ccff;
+}
+
+.theme-mailtrek .mt-bar-orange { background: #ff9900; }
+.theme-mailtrek .mt-bar-peach { background: #ffcc99; }
+.theme-mailtrek .mt-bar-blue { background: #99ccff; }
+.theme-mailtrek .mt-bar-red { background: #cc6666; }
+
+.theme-mailtrek .mt-label {
+  display: flex;
+  align-items: center;
+  padding: 0 0.55rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.theme-mailtrek .mt-label-title {
+  background: #ff9900;
+  color: #000;
+  border-radius: 0 12px 12px 0;
+  padding-left: 0.75rem;
+  padding-right: 0.85rem;
+}
+
+.theme-mailtrek .mt-label-id {
+  background: #9999ff;
+  color: #000;
+  border-radius: 12px;
+  padding: 0 0.65rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+}
+
+.theme-mailtrek .mt-elbow {
+  flex-shrink: 0;
+  width: 2rem;
+  min-height: 1.15rem;
+}
+
+.theme-mailtrek .mt-elbow-tr {
+  background: #99ccff;
+  border-radius: 0 0 0 999px;
+  align-self: flex-end;
+  height: 1.5rem;
+  margin-top: -0.15rem;
+}
+
+.theme-mailtrek .mt-elbow-bl {
+  background: #ff9900;
+  border-radius: 999px 0 0 0;
+  width: 2.4rem;
+  height: 1.35rem;
+}
+
+.theme-mailtrek .mt-chip {
+  display: flex;
+  align-items: center;
+  padding: 0 0.55rem;
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #000;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.theme-mailtrek .mt-chip-blue { background: #99ccff; }
+.theme-mailtrek .mt-chip-lavender { background: #9999ff; }
+.theme-mailtrek .mt-chip-tan { background: #ffcc66; }
+.theme-mailtrek .mt-chip-orange { background: #ff9900; }
+.theme-mailtrek .mt-chip-peach { background: #ffcc99; }
+
+.theme-mailtrek .mt-spacer-bar {
+  flex: 1;
+  min-width: 1rem;
+  background: #333;
+  border-radius: 999px;
+  opacity: 0.55;
+}
+
+.theme-mailtrek .mt-status {
+  display: flex;
+  align-items: center;
+  padding: 0 0.7rem;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  border-radius: 999px;
+}
+
+.theme-mailtrek .mt-status-ready {
+  background: #ffcc66;
+  color: #000;
+}
+
+.theme-mailtrek .summary-body {
+  flex: 1;
+  position: relative;
+  z-index: 1;
+  background: #000;
+  color: #ffcc99;
+  padding: 0.85rem 1rem 1rem;
+  font-family: Antonio, 'Arial Narrow', 'Helvetica Neue', sans-serif;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  letter-spacing: 0.04em;
+  border-top: 3px solid #ff9900;
+  border-left: 6px solid #99ccff;
+  margin: 0 0.35rem;
+  border-radius: 0 0 0 18px;
+}
+
+.theme-mailtrek .summary-body::before {
+  content: 'LCARS TEXT ANALYSIS — INCOMING TRANSMISSION';
+  display: block;
+  color: #99ccff;
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  margin-bottom: 0.65rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 2px solid #333;
+}
+
+.theme-mailtrek .summary-body::after {
+  content: 'END OF TRANSMISSION — STARFLEET UFP';
+  display: block;
+  margin-top: 0.85rem;
+  padding-top: 0.5rem;
+  border-top: 2px solid #333;
+  color: #ff9900;
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.theme-mailtrek .markdown-body h2 {
+  color: #ff9900;
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 0.78rem;
+  letter-spacing: 0.2em;
+  margin: 1.1rem 0 0.45rem;
+  padding: 0.25rem 0.55rem;
+  background: linear-gradient(90deg, rgba(255, 153, 0, 0.22), transparent);
+  border-left: 4px solid #ff9900;
+  border-radius: 0 999px 999px 0;
+}
+
+.theme-mailtrek .markdown-body h2:first-child {
+  margin-top: 0;
+}
+
+.theme-mailtrek .markdown-body h2::before {
+  content: '◢ ';
+  color: #99ccff;
+}
+
+.theme-mailtrek .markdown-body h3 {
+  color: #9999ff;
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  letter-spacing: 0.16em;
+  margin: 0.75rem 0 0.35rem;
+}
+
+.theme-mailtrek .markdown-body h3::before {
+  content: '▸ ';
+  color: #ffcc66;
+}
+
+.theme-mailtrek .markdown-body p {
+  margin: 0.45rem 0;
+  color: #ffcc99;
+}
+
+.theme-mailtrek .markdown-body strong {
+  color: #fff;
+  font-weight: 700;
+}
+
+.theme-mailtrek .markdown-body em {
+  color: #99ccff;
+  font-style: normal;
+  letter-spacing: 0.06em;
+}
+
+.theme-mailtrek .markdown-body code {
+  background: rgba(153, 204, 255, 0.12);
+  color: #99ccff;
+  border: 1px solid rgba(153, 204, 255, 0.28);
+  border-radius: 4px;
+  font-family: 'Courier New', Courier, var(--mono);
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+}
+
+.theme-mailtrek .markdown-body ul {
+  list-style: none;
+  margin: 0.4rem 0 0.65rem 0.25rem;
+  padding: 0;
+}
+
+.theme-mailtrek .markdown-body ul li {
+  position: relative;
+  padding-left: 1rem;
+  margin: 0.3rem 0;
+}
+
+.theme-mailtrek .markdown-body ul li::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.55rem;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 999px;
+  background: #ff9900;
+}
+
+.theme-mailtrek .markdown-body ol {
+  margin-left: 1.2rem;
+  padding: 0;
+}
+
+.theme-mailtrek .markdown-body ol li::marker {
+  color: #99ccff;
+  font-weight: 700;
+}
+
+.theme-mailtrek .summary-empty {
+  color: #9999ff;
+  font-style: normal;
+  letter-spacing: 0.08em;
+}
+
+.theme-mailtrek .summary-body.summary-loading::before,
+.theme-mailtrek .summary-body.summary-error::before {
+  content: 'LCARS — DECODING SUBSPACE TRANSMISSION';
+  color: #99ccff;
+  border-bottom-color: #99ccff;
+}
+
+.theme-mailtrek .summary-body.summary-loading::after,
+.theme-mailtrek .summary-body.summary-error::after {
+  content: 'AWAITING RESPONSE FROM MAIN COMPUTER';
+  color: #ffcc66;
+  border-top-color: #ff9900;
+}
+
+.theme-mailtrek .summary-body.summary-error::before {
+  content: 'LCARS — TRANSMISSION ERROR';
+  color: #cc6666;
+}
+
+.theme-mailtrek .summary-body.summary-error::after {
+  content: 'UNABLE TO COMPLETE TEXT ANALYSIS';
+  color: #cc6666;
+}
+
+.theme-mailtrek .summary-body.summary-loading,
+.theme-mailtrek .summary-body.summary-error {
+  justify-content: flex-start;
+  color: #ffcc99;
+}
+
+.theme-mailtrek .summary-body.summary-error {
+  border-left-color: #cc6666;
+  color: #ff9999;
+}
+
+.theme-mailtrek .summary-body.summary-loading .markdown-body,
+.theme-mailtrek .summary-body.summary-error .markdown-body {
+  display: none;
+}
+
+/* --- Weyland-Yutani Corporation (Alien) --- */
+.weyland-terminal-header,
+.weyland-terminal-footer {
+  display: none;
+}
+
+.summary-crt-chassis:has(.theme-weylandyutani) {
+  background:
+    linear-gradient(180deg, #3a3a3a 0%, #252525 40%, #1a1a1a 100%);
+  border-radius: 4px;
+  padding: 0.55rem 0.75rem 0.5rem;
+  box-shadow:
+    inset 0 0 0 2px #555,
+    inset 0 0 0 4px #1a1a1a,
+    0 10px 28px rgba(0, 0, 0, 0.55);
+  border: 3px solid #2a2a2a;
+}
+
+.summary-crt-chassis:has(.theme-weylandyutani) .crt-bezel-top,
+.summary-crt-chassis:has(.theme-weylandyutani) .crt-bezel-bottom {
+  background: linear-gradient(180deg, #4a4a4a 0%, #2e2e2e 100%);
+  border-color: #1a1a1a;
+  position: relative;
+}
+
+.summary-crt-chassis:has(.theme-weylandyutani) .crt-bezel-top::after,
+.summary-crt-chassis:has(.theme-weylandyutani) .crt-bezel-bottom::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: repeating-linear-gradient(
+    -45deg,
+    #e8c547,
+    #e8c547 6px,
+    #111 6px,
+    #111 12px
+  );
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+.summary-crt-chassis:has(.theme-weylandyutani) .crt-bezel-top::after {
+  bottom: 0;
+}
+
+.summary-crt-chassis:has(.theme-weylandyutani) .crt-bezel-bottom::before {
+  top: 0;
+}
+
+.summary-crt-chassis:has(.theme-weylandyutani) .crt-nameplate {
+  border-color: #555;
+  background: linear-gradient(180deg, #505050, #303030);
+}
+
+.summary-crt-chassis:has(.theme-weylandyutani) .crt-sony {
+  font-size: 0;
+}
+
+.summary-crt-chassis:has(.theme-weylandyutani) .crt-sony::after {
+  content: 'WEYLAND-YUTANI';
+  font-family: 'Share Tech Mono', var(--mono);
+  font-size: 0.52rem;
+  font-weight: 400;
+  color: #8fd48f;
+  letter-spacing: 0.2em;
+}
+
+.summary-crt-chassis:has(.theme-weylandyutani) .crt-rgb-r { background: #e8c547; }
+.summary-crt-chassis:has(.theme-weylandyutani) .crt-rgb-g { background: #4ae24a; }
+.summary-crt-chassis:has(.theme-weylandyutani) .crt-rgb-b { background: #6a6a6a; }
+
+.summary-crt-chassis:has(.theme-weylandyutani) .crt-power-led {
+  background: #4ae24a;
+  box-shadow: 0 0 8px rgba(74, 226, 74, 0.75);
+}
+
+.summary-crt-chassis:has(.theme-weylandyutani) .crt-power-label {
+  color: #8fd48f;
+  letter-spacing: 0.12em;
+}
+
+.summary-crt-chassis:has(.theme-weylandyutani) .crt-screen-well {
+  border: 2px solid #1a1a1a;
+  box-shadow: inset 0 0 24px rgba(74, 226, 74, 0.06);
+}
+
+.summary-viewport.theme-weylandyutani {
+  display: flex;
+  flex-direction: column;
+  border: 2px solid #2a4a2a;
+  border-radius: 2px;
+  background: #020402;
+  padding: 0;
+  box-shadow:
+    inset 0 0 60px rgba(0, 0, 0, 0.9),
+    inset 0 0 80px rgba(74, 226, 74, 0.05);
+  overflow: hidden;
+}
+
+.summary-viewport.theme-weylandyutani::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+  background: repeating-linear-gradient(
+    180deg,
+    transparent 0,
+    transparent 2px,
+    rgba(0, 0, 0, 0.16) 2px,
+    rgba(0, 0, 0, 0.16) 4px
+  );
+  opacity: 0.65;
+}
+
+.summary-viewport.theme-weylandyutani::after {
+  content: '● ONLINE';
+  position: absolute;
+  top: 0.4rem;
+  right: 0.55rem;
+  z-index: 4;
+  font-family: 'Share Tech Mono', var(--mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.16em;
+  color: #4ae24a;
+  text-shadow: 0 0 8px rgba(74, 226, 74, 0.55);
+  pointer-events: none;
+}
+
+.theme-weylandyutani .weyland-terminal-header,
+.theme-weylandyutani .weyland-terminal-footer {
+  display: block;
+  flex-shrink: 0;
+  font-family: 'Share Tech Mono', 'Courier New', Courier, var(--mono);
+  user-select: none;
+  pointer-events: none;
+  position: relative;
+  z-index: 2;
+}
+
+.theme-weylandyutani .wy-hazard {
+  height: 6px;
+  background: repeating-linear-gradient(
+    -45deg,
+    #e8c547,
+    #e8c547 7px,
+    #111 7px,
+    #111 14px
+  );
+  border-bottom: 1px solid #2a2a2a;
+}
+
+.theme-weylandyutani .wy-hazard-thin {
+  height: 4px;
+  border-bottom: none;
+  border-top: 1px solid #2a2a2a;
+}
+
+.theme-weylandyutani .wy-corp-lockup {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.55rem 0.75rem 0.35rem;
+  background: #030503;
+  border-bottom: 1px solid #1a3a1a;
+}
+
+.theme-weylandyutani .wy-logo-mark {
+  position: relative;
+  flex-shrink: 0;
+  width: 2rem;
+  height: 2rem;
+  border: 2px solid #4ae24a;
+  border-radius: 50%;
+  box-shadow: 0 0 10px rgba(74, 226, 74, 0.35);
+}
+
+.theme-weylandyutani .wy-logo-mark::before,
+.theme-weylandyutani .wy-logo-mark::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 0.85rem;
+  height: 2px;
+  background: #4ae24a;
+  box-shadow: 0 0 4px rgba(74, 226, 74, 0.5);
+}
+
+.theme-weylandyutani .wy-logo-mark::before {
+  left: -0.55rem;
+  transform: translateY(-50%) rotate(-28deg);
+}
+
+.theme-weylandyutani .wy-logo-mark::after {
+  right: -0.55rem;
+  transform: translateY(-50%) rotate(28deg);
+}
+
+.theme-weylandyutani .wy-corp-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  min-width: 0;
+}
+
+.theme-weylandyutani .wy-corp-name {
+  color: #4ae24a;
+  font-size: 0.72rem;
+  font-weight: 400;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  text-shadow: 0 0 6px rgba(74, 226, 74, 0.4);
+}
+
+.theme-weylandyutani .wy-corp-tag {
+  color: #6a9a6a;
+  font-size: 0.58rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.theme-weylandyutani .wy-sys-line,
+.theme-weylandyutani .wy-footer-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.5rem;
+  padding: 0.35rem 0.75rem;
+  background: #020302;
+  font-size: 0.58rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border-bottom: 1px solid #142814;
+}
+
+.theme-weylandyutani .wy-footer-line {
+  border-bottom: none;
+  border-top: 1px solid #142814;
+  color: #4a7a4a;
+}
+
+.theme-weylandyutani .wy-sys {
+  color: #5a8a5a;
+}
+
+.theme-weylandyutani .wy-bright {
+  color: #4ae24a;
+  text-shadow: 0 0 5px rgba(74, 226, 74, 0.35);
+}
+
+.theme-weylandyutani .wy-dim {
+  color: #3a5a3a;
+}
+
+.theme-weylandyutani .wy-sep {
+  color: #2a4a2a;
+}
+
+.theme-weylandyutani .summary-body {
+  flex: 1;
+  position: relative;
+  z-index: 1;
+  background: #020402;
+  color: #4ae24a;
+  padding: 0.8rem 0.9rem 1rem;
+  font-family: 'Share Tech Mono', 'Courier New', Courier, var(--mono);
+  font-size: 0.8rem;
+  line-height: 1.48;
+  letter-spacing: 0.04em;
+  text-shadow: 0 0 2px rgba(74, 226, 74, 0.35);
+}
+
+.theme-weylandyutani .summary-body::before {
+  content: 'INTERFACE 2037 — INCOMING TRANSMISSION SUMMARY';
+  display: block;
+  color: #6a9a6a;
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  margin-bottom: 0.6rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px dashed #1a3a1a;
+}
+
+.theme-weylandyutani .summary-body::after {
+  content: 'END TRANSMISSION — WEYLAND-YUTANI CORP PROPRIETARY';
+  display: block;
+  margin-top: 0.85rem;
+  padding-top: 0.5rem;
+  border-top: 1px dashed #1a3a1a;
+  color: #3a6a3a;
+  font-size: 0.58rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.theme-weylandyutani .markdown-body h2 {
+  color: #8fd48f;
+  font-weight: 400;
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  margin: 1rem 0 0.45rem;
+  padding: 0.2rem 0;
+  border-top: 1px solid #1a3a1a;
+  border-bottom: 1px solid #1a3a1a;
+}
+
+.theme-weylandyutani .markdown-body h2:first-child {
+  margin-top: 0;
+  border-top: none;
+}
+
+.theme-weylandyutani .markdown-body h2::before {
+  content: '< ';
+  color: #e8c547;
+}
+
+.theme-weylandyutani .markdown-body h2::after {
+  content: ' >';
+  color: #e8c547;
+}
+
+.theme-weylandyutani .markdown-body h3 {
+  color: #6fcf6f;
+  font-weight: 400;
+  text-transform: uppercase;
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  margin: 0.7rem 0 0.35rem;
+}
+
+.theme-weylandyutani .markdown-body h3::before {
+  content: '>> ';
+  color: #3a6a3a;
+}
+
+.theme-weylandyutani .markdown-body p {
+  margin: 0.4rem 0;
+  color: #4ae24a;
+}
+
+.theme-weylandyutani .markdown-body strong {
+  color: #b8ffb8;
+  font-weight: 400;
+  text-shadow: 0 0 4px rgba(74, 226, 74, 0.45);
+}
+
+.theme-weylandyutani .markdown-body em {
+  color: #e8c547;
+  font-style: normal;
+}
+
+.theme-weylandyutani .markdown-body code {
+  background: rgba(74, 226, 74, 0.08);
+  color: #8fd48f;
+  border: 1px solid #1a4a1a;
+  letter-spacing: 0.06em;
+}
+
+.theme-weylandyutani .markdown-body ul {
+  list-style: none;
+  margin: 0.35rem 0 0.6rem 0.35rem;
+  padding: 0;
+}
+
+.theme-weylandyutani .markdown-body ul li::before {
+  content: '■ ';
+  color: #e8c547;
+  font-size: 0.55rem;
+}
+
+.theme-weylandyutani .markdown-body ol {
+  margin-left: 1.1rem;
+  padding: 0;
+}
+
+.theme-weylandyutani .markdown-body ol li::marker {
+  color: #6a9a6a;
+}
+
+.theme-weylandyutani .summary-empty {
+  color: #5a8a5a;
+  font-style: normal;
+  letter-spacing: 0.08em;
+}
+
+.theme-weylandyutani .summary-body.summary-loading::before,
+.theme-weylandyutani .summary-body.summary-error::before {
+  content: 'MU/TH/UR 6000 — PROCESSING TRANSMISSION';
+  color: #8fd48f;
+  border-bottom-color: #4ae24a;
+}
+
+.theme-weylandyutani .summary-body.summary-loading::after,
+.theme-weylandyutani .summary-body.summary-error::after {
+  content: 'PLEASE STAND BY';
+  color: #6a9a6a;
+}
+
+.theme-weylandyutani .summary-body.summary-error::before {
+  content: 'INTERFACE 2037 — TRANSMISSION FAILURE';
+  color: #e8c547;
+}
+
+.theme-weylandyutani .summary-body.summary-error::after {
+  content: 'CONTACT WEYLAND-YUTANI SYSTEMS ADMINISTRATOR';
+  color: #c45c5c;
+}
+
+.theme-weylandyutani .summary-body.summary-loading,
+.theme-weylandyutani .summary-body.summary-error {
+  justify-content: flex-start;
+  color: #4ae24a;
+}
+
+.theme-weylandyutani .summary-body.summary-error {
+  color: #c45c5c;
+  text-shadow: 0 0 4px rgba(196, 92, 92, 0.35);
+}
+
+.theme-weylandyutani .summary-body.summary-loading .markdown-body,
+.theme-weylandyutani .summary-body.summary-error .markdown-body {
+  display: none;
+}
+
+/* --- Red Dwarf (JMC / Holly) --- */
+.reddwarf-panel-header,
+.reddwarf-panel-footer {
+  display: none;
+}
+
+.summary-crt-chassis:has(.theme-reddwarf) {
+  background:
+    linear-gradient(180deg, #ece0cc 0%, #d8ccb4 45%, #c4b8a0 100%);
+  border-radius: 6px;
+  padding: 0.6rem 0.8rem 0.55rem;
+  box-shadow:
+    inset 0 0 0 3px #b81010,
+    inset 0 0 0 5px #8a0808,
+    0 10px 26px rgba(0, 0, 0, 0.4);
+  border: 4px solid #a01010;
+}
+
+.summary-crt-chassis:has(.theme-reddwarf) .crt-bezel-top,
+.summary-crt-chassis:has(.theme-reddwarf) .crt-bezel-bottom {
+  background: linear-gradient(180deg, #e0d4c0 0%, #c8bcaa 100%);
+  border: 2px solid #a01010;
+  border-radius: 4px;
+}
+
+.summary-crt-chassis:has(.theme-reddwarf) .crt-nameplate {
+  border: 2px solid #b81010;
+  background: linear-gradient(180deg, #f0e6d4, #d0c4b0);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+.summary-crt-chassis:has(.theme-reddwarf) .crt-sony {
+  font-size: 0;
+}
+
+.summary-crt-chassis:has(.theme-reddwarf) .crt-sony::after {
+  content: 'JMC RED DWARF';
+  font-family: 'Chakra Petch', 'Arial Black', sans-serif;
+  font-size: 0.54rem;
+  font-weight: 700;
+  color: #b81010;
+  letter-spacing: 0.16em;
+}
+
+.summary-crt-chassis:has(.theme-reddwarf) .crt-rgb-r { background: #b81010; }
+.summary-crt-chassis:has(.theme-reddwarf) .crt-rgb-g { background: #e8c030; }
+.summary-crt-chassis:has(.theme-reddwarf) .crt-rgb-b { background: #78d8f0; }
+
+.summary-crt-chassis:has(.theme-reddwarf) .crt-power-led {
+  background: #78d8f0;
+  box-shadow: 0 0 8px rgba(120, 216, 240, 0.75);
+}
+
+.summary-crt-chassis:has(.theme-reddwarf) .crt-power-label {
+  color: #6a3020;
+  letter-spacing: 0.1em;
+}
+
+.summary-crt-chassis:has(.theme-reddwarf) .crt-screen-well {
+  border: 3px solid #1a1a2a;
+  border-radius: 4px;
+  box-shadow: inset 0 0 16px rgba(0, 0, 0, 0.55);
+}
+
+.summary-viewport.theme-reddwarf {
+  display: flex;
+  flex-direction: column;
+  border: 3px solid #303050;
+  border-radius: 3px;
+  background: #080c18;
+  padding: 0;
+  box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.85);
+  overflow: hidden;
+}
+
+.summary-viewport.theme-reddwarf::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(1px 1px at 12% 18%, rgba(255, 255, 255, 0.55), transparent),
+    radial-gradient(1px 1px at 28% 72%, rgba(255, 255, 255, 0.4), transparent),
+    radial-gradient(1px 1px at 45% 35%, rgba(255, 255, 255, 0.35), transparent),
+    radial-gradient(1px 1px at 62% 58%, rgba(255, 255, 255, 0.45), transparent),
+    radial-gradient(1px 1px at 78% 22%, rgba(255, 255, 255, 0.5), transparent),
+    radial-gradient(1px 1px at 88% 78%, rgba(255, 255, 255, 0.35), transparent),
+    radial-gradient(ellipse at 50% 110%, rgba(30, 50, 90, 0.35), transparent 55%),
+    linear-gradient(180deg, #0a1020 0%, #060810 100%);
+}
+
+.summary-viewport.theme-reddwarf::after {
+  content: '● HOLLY ONLINE';
+  position: absolute;
+  top: 0.4rem;
+  right: 0.55rem;
+  z-index: 4;
+  font-family: 'Chakra Petch', var(--mono);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: #78d8f0;
+  text-shadow: 0 0 8px rgba(120, 216, 240, 0.55);
+  pointer-events: none;
+}
+
+.theme-reddwarf .reddwarf-panel-header,
+.theme-reddwarf .reddwarf-panel-footer {
+  display: block;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 2;
+  font-family: 'Chakra Petch', 'Courier New', Courier, var(--mono);
+  user-select: none;
+  pointer-events: none;
+}
+
+.theme-reddwarf .rd-jmc-stripe {
+  height: 5px;
+  background: repeating-linear-gradient(
+    90deg,
+    #b81010,
+    #b81010 12px,
+    #e8c030 12px,
+    #e8c030 24px
+  );
+  border-bottom: 1px solid #601010;
+}
+
+.theme-reddwarf .rd-jmc-stripe-bottom {
+  border-bottom: none;
+  border-top: 1px solid #601010;
+}
+
+.theme-reddwarf .rd-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.35rem 0.75rem;
+  padding: 0.5rem 0.7rem 0.25rem;
+  background: linear-gradient(180deg, #d42020 0%, #a01010 100%);
+  border-bottom: 2px solid #601010;
+}
+
+.theme-reddwarf .rd-ship-name {
+  color: #fff;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  text-shadow:
+    2px 2px 0 #601010,
+    0 0 12px rgba(255, 200, 100, 0.35);
+}
+
+.theme-reddwarf .rd-jmc {
+  color: #ffe8a8;
+  font-size: 0.58rem;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+.theme-reddwarf .rd-holly-line,
+.theme-reddwarf .rd-footer-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem 0.5rem;
+  padding: 0.35rem 0.7rem;
+  background: rgba(8, 12, 24, 0.92);
+  font-size: 0.58rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border-bottom: 1px solid #283858;
+}
+
+.theme-reddwarf .rd-footer-line {
+  border-bottom: none;
+  color: #88b8d0;
+}
+
+.theme-reddwarf .rd-holly {
+  color: #f0a8ff;
+  font-weight: 700;
+  text-shadow: 0 0 6px rgba(240, 168, 255, 0.45);
+}
+
+.theme-reddwarf .rd-sys,
+.theme-reddwarf .rd-deck {
+  color: #78d8f0;
+}
+
+.theme-reddwarf .rd-bright {
+  color: #a8f0ff;
+  text-shadow: 0 0 5px rgba(168, 240, 255, 0.35);
+}
+
+.theme-reddwarf .rd-dim {
+  color: #5888a8;
+}
+
+.theme-reddwarf .rd-sep {
+  color: #384860;
+}
+
+.theme-reddwarf .summary-body {
+  flex: 1;
+  position: relative;
+  z-index: 1;
+  background: transparent;
+  color: #a8f0ff;
+  padding: 0.85rem 0.9rem 1rem;
+  font-family: 'Courier New', Courier, var(--mono);
+  font-size: 0.82rem;
+  line-height: 1.48;
+  letter-spacing: 0.03em;
+  text-shadow: 0 0 3px rgba(168, 240, 255, 0.25);
+}
+
+.theme-reddwarf .summary-body::before {
+  content: 'GOOD MORNING — INCOMING MAIL SUMMARY FOR YOUR ATTENTION';
+  display: block;
+  color: #78d8f0;
+  font-family: 'Chakra Petch', var(--mono);
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin-bottom: 0.6rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px dashed #304060;
+}
+
+.theme-reddwarf .summary-body::after {
+  content: 'END OF TRANSMISSION — PLEASE DO NOT PANIC';
+  display: block;
+  margin-top: 0.85rem;
+  padding-top: 0.5rem;
+  border-top: 1px dashed #304060;
+  color: #5888a8;
+  font-family: 'Chakra Petch', var(--mono);
+  font-size: 0.56rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.theme-reddwarf .markdown-body h2 {
+  color: #f0d878;
+  font-family: 'Chakra Petch', var(--mono);
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  margin: 1rem 0 0.45rem;
+  padding: 0.2rem 0.45rem;
+  background: rgba(184, 16, 16, 0.22);
+  border-left: 4px solid #b81010;
+}
+
+.theme-reddwarf .markdown-body h2:first-child {
+  margin-top: 0;
+}
+
+.theme-reddwarf .markdown-body h2::before {
+  content: '▶ ';
+  color: #e8c030;
+}
+
+.theme-reddwarf .markdown-body h3 {
+  color: #c8e8ff;
+  font-family: 'Chakra Petch', var(--mono);
+  font-weight: 500;
+  text-transform: uppercase;
+  font-size: 0.66rem;
+  letter-spacing: 0.1em;
+  margin: 0.7rem 0 0.35rem;
+}
+
+.theme-reddwarf .markdown-body h3::before {
+  content: '· ';
+  color: #f0a8ff;
+}
+
+.theme-reddwarf .markdown-body p {
+  margin: 0.4rem 0;
+  color: #a8f0ff;
+}
+
+.theme-reddwarf .markdown-body strong {
+  color: #fff;
+  font-weight: 700;
+  text-shadow: 0 0 5px rgba(255, 255, 255, 0.25);
+}
+
+.theme-reddwarf .markdown-body em {
+  color: #f0a8ff;
+  font-style: normal;
+}
+
+.theme-reddwarf .markdown-body code {
+  background: rgba(120, 216, 240, 0.1);
+  color: #c8f0ff;
+  border: 1px solid #304860;
+  font-size: 0.78rem;
+}
+
+.theme-reddwarf .markdown-body ul {
+  list-style: none;
+  margin: 0.35rem 0 0.6rem 0.35rem;
+  padding: 0;
+}
+
+.theme-reddwarf .markdown-body ul li::before {
+  content: '◆ ';
+  color: #e8c030;
+  font-size: 0.55rem;
+}
+
+.theme-reddwarf .markdown-body ol {
+  margin-left: 1.1rem;
+  padding: 0;
+}
+
+.theme-reddwarf .markdown-body ol li::marker {
+  color: #78d8f0;
+  font-weight: 700;
+}
+
+.theme-reddwarf .summary-empty {
+  color: #78d8f0;
+  font-style: normal;
+  letter-spacing: 0.06em;
+}
+
+.theme-reddwarf .summary-body.summary-loading::before,
+.theme-reddwarf .summary-body.summary-error::before {
+  content: 'HOLLY IS THINKING — DO NOT SWITCH OFF';
+  color: #f0a8ff;
+  border-bottom-color: #78d8f0;
+}
+
+.theme-reddwarf .summary-body.summary-loading::after,
+.theme-reddwarf .summary-body.summary-error::after {
+  content: 'THIS MAY TAKE A WHILE — IQ 6000, SAME AS A TROPICAL FISH';
+  color: #5888a8;
+}
+
+.theme-reddwarf .summary-body.summary-error::before {
+  content: 'HOLLY REPORTS A PROBLEM — SOMETHING\'S GONE WRONG';
+  color: #ff8866;
+}
+
+.theme-reddwarf .summary-body.summary-error::after {
+  content: 'TRY AGAIN — OR ASK LISTER TO FIX IT';
+  color: #c45c5c;
+}
+
+.theme-reddwarf .summary-body.summary-loading,
+.theme-reddwarf .summary-body.summary-error {
+  justify-content: flex-start;
+  color: #a8f0ff;
+}
+
+.theme-reddwarf .summary-body.summary-error {
+  color: #ffaa88;
+}
+
+.theme-reddwarf .summary-body.summary-loading .markdown-body,
+.theme-reddwarf .summary-body.summary-error .markdown-body {
+  display: none;
+}
+
+/* --- Galactic Empire (Star Wars) --- */
+.empire-terminal-header,
+.empire-terminal-footer {
+  display: none;
+}
+
+.summary-crt-chassis:has(.theme-empire) {
+  background: linear-gradient(180deg, #3a3a42 0%, #222228 45%, #141418 100%);
+  border-radius: 2px;
+  padding: 0.55rem 0.75rem 0.5rem;
+  box-shadow:
+    inset 0 0 0 2px #5a5a64,
+    inset 0 0 0 4px #0a0a0c,
+    0 12px 30px rgba(0, 0, 0, 0.65);
+  border: 3px solid #1a1a20;
+}
+
+.summary-crt-chassis:has(.theme-empire) .crt-bezel-top,
+.summary-crt-chassis:has(.theme-empire) .crt-bezel-bottom {
+  background: linear-gradient(180deg, #484850 0%, #2a2a32 100%);
+  border: 2px solid #1a1a20;
+  border-radius: 1px;
+  position: relative;
+}
+
+.summary-crt-chassis:has(.theme-empire) .crt-bezel-top::after,
+.summary-crt-chassis:has(.theme-empire) .crt-bezel-bottom::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #c41c1c 15%, #c41c1c 85%, transparent);
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+.summary-crt-chassis:has(.theme-empire) .crt-bezel-top::after {
+  bottom: 0;
+}
+
+.summary-crt-chassis:has(.theme-empire) .crt-bezel-bottom::before {
+  top: 0;
+}
+
+.summary-crt-chassis:has(.theme-empire) .crt-nameplate {
+  border: 1px solid #5a5a64;
+  background: linear-gradient(180deg, #3a3a44, #222228);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.summary-crt-chassis:has(.theme-empire) .crt-sony {
+  font-size: 0;
+}
+
+.summary-crt-chassis:has(.theme-empire) .crt-sony::after {
+  content: 'IMPERIAL FLEET';
+  font-family: Orbitron, 'Arial Narrow', sans-serif;
+  font-size: 0.5rem;
+  font-weight: 700;
+  color: #c8d0e0;
+  letter-spacing: 0.22em;
+}
+
+.summary-crt-chassis:has(.theme-empire) .crt-rgb-r { background: #c41c1c; }
+.summary-crt-chassis:has(.theme-empire) .crt-rgb-g { background: #6a6a74; }
+.summary-crt-chassis:has(.theme-empire) .crt-rgb-b { background: #a8b8d8; }
+
+.summary-crt-chassis:has(.theme-empire) .crt-power-led {
+  background: #c41c1c;
+  box-shadow: 0 0 8px rgba(196, 28, 28, 0.8);
+}
+
+.summary-crt-chassis:has(.theme-empire) .crt-power-label {
+  color: #8898b0;
+  letter-spacing: 0.14em;
+}
+
+.summary-crt-chassis:has(.theme-empire) .crt-screen-well {
+  border: 2px solid #0a0a0c;
+  box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.75);
+}
+
+.summary-viewport.theme-empire {
+  display: flex;
+  flex-direction: column;
+  border: 2px solid #3a3a44;
+  border-radius: 1px;
+  background: #08080c;
+  padding: 0;
+  box-shadow:
+    inset 0 0 50px rgba(0, 0, 0, 0.9),
+    inset 0 0 30px rgba(196, 28, 28, 0.04);
+  overflow: hidden;
+}
+
+.summary-viewport.theme-empire::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      transparent 0,
+      transparent 3px,
+      rgba(255, 255, 255, 0.012) 3px,
+      rgba(255, 255, 255, 0.012) 4px
+    ),
+    linear-gradient(180deg, #0c0c12 0%, #060608 100%);
+}
+
+.summary-viewport.theme-empire::after {
+  content: '● SECURE CHANNEL';
+  position: absolute;
+  top: 0.4rem;
+  right: 0.55rem;
+  z-index: 4;
+  font-family: Orbitron, var(--mono);
+  font-size: 0.54rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: #c41c1c;
+  text-shadow: 0 0 8px rgba(196, 28, 28, 0.55);
+  pointer-events: none;
+}
+
+.theme-empire .empire-terminal-header,
+.theme-empire .empire-terminal-footer {
+  display: block;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 2;
+  font-family: Orbitron, 'Share Tech Mono', var(--mono);
+  user-select: none;
+  pointer-events: none;
+}
+
+.theme-empire .imp-stripe {
+  height: 4px;
+  background: linear-gradient(
+    90deg,
+    #8b1010 0%,
+    #c41c1c 20%,
+    #e03030 50%,
+    #c41c1c 80%,
+    #8b1010 100%
+  );
+  border-bottom: 1px solid #4a0808;
+}
+
+.theme-empire .imp-stripe-bottom {
+  border-bottom: none;
+  border-top: 1px solid #4a0808;
+}
+
+.theme-empire .imp-lockup {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.55rem 0.75rem 0.35rem;
+  background: linear-gradient(180deg, #1a1a22 0%, #101014 100%);
+  border-bottom: 1px solid #2a2a34;
+}
+
+.theme-empire .imp-crest {
+  position: relative;
+  flex-shrink: 0;
+  width: 2.1rem;
+  height: 2.1rem;
+  border: 2px solid #8898b0;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 50% 50%, #2a2a34 0%, #141418 70%);
+  box-shadow:
+    0 0 10px rgba(168, 184, 216, 0.2),
+    inset 0 0 8px rgba(0, 0, 0, 0.6);
+}
+
+.theme-empire .imp-crest::before {
+  content: '';
+  position: absolute;
+  inset: 0.35rem;
+  border: 2px solid #c41c1c;
+  border-radius: 50%;
+  box-shadow: 0 0 6px rgba(196, 28, 28, 0.45);
+}
+
+.theme-empire .imp-crest::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0.55rem;
+  height: 0.55rem;
+  transform: translate(-50%, -50%);
+  background: #c8d4e8;
+  clip-path: polygon(50% 0%, 65% 35%, 100% 50%, 65% 65%, 50% 100%, 35% 65%, 0% 50%, 35% 35%);
+}
+
+.theme-empire .imp-corp {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.theme-empire .imp-name {
+  color: #e8ecf4;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  text-shadow: 0 0 8px rgba(200, 212, 232, 0.25);
+}
+
+.theme-empire .imp-sub {
+  color: #6a7488;
+  font-size: 0.54rem;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.theme-empire .imp-sys-line,
+.theme-empire .imp-footer-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem 0.5rem;
+  padding: 0.35rem 0.75rem;
+  background: #08080c;
+  font-size: 0.54rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border-bottom: 1px solid #1e1e28;
+}
+
+.theme-empire .imp-footer-line {
+  border-bottom: none;
+  border-top: 1px solid #1e1e28;
+  color: #6a7488;
+}
+
+.theme-empire .imp-sys {
+  color: #8898b0;
+}
+
+.theme-empire .imp-bright {
+  color: #c8d4e8;
+  text-shadow: 0 0 5px rgba(200, 212, 232, 0.3);
+}
+
+.theme-empire .imp-alert {
+  color: #e03030;
+  font-weight: 700;
+  text-shadow: 0 0 6px rgba(224, 48, 48, 0.45);
+}
+
+.theme-empire .imp-dim {
+  color: #4a5468;
+}
+
+.theme-empire .imp-sep {
+  color: #2a3040;
+}
+
+.theme-empire .summary-body {
+  flex: 1;
+  position: relative;
+  z-index: 1;
+  background: transparent;
+  color: #b8c8e0;
+  padding: 0.85rem 0.9rem 1rem;
+  font-family: 'Share Tech Mono', 'Courier New', Courier, var(--mono);
+  font-size: 0.8rem;
+  line-height: 1.48;
+  letter-spacing: 0.04em;
+  text-shadow: 0 0 2px rgba(184, 200, 224, 0.2);
+  border-left: 3px solid #c41c1c;
+  margin: 0 0.35rem;
+}
+
+.theme-empire .summary-body::before {
+  content: 'IMPERIAL TRANSMISSION — INCOMING MAIL SUMMARY';
+  display: block;
+  color: #8898b0;
+  font-family: Orbitron, var(--mono);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-bottom: 0.6rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid #2a3040;
+}
+
+.theme-empire .summary-body::after {
+  content: 'END TRANSMISSION — LONG LIVE THE EMPEROR';
+  display: block;
+  margin-top: 0.85rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid #2a3040;
+  color: #c41c1c;
+  font-family: Orbitron, var(--mono);
+  font-size: 0.54rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  text-shadow: 0 0 6px rgba(196, 28, 28, 0.35);
+}
+
+.theme-empire .markdown-body h2 {
+  color: #e8ecf4;
+  font-family: Orbitron, var(--mono);
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 0.7rem;
+  letter-spacing: 0.16em;
+  margin: 1rem 0 0.45rem;
+  padding: 0.25rem 0.5rem;
+  background: linear-gradient(90deg, rgba(196, 28, 28, 0.18), transparent);
+  border-top: 1px solid #3a3a44;
+  border-bottom: 1px solid #3a3a44;
+}
+
+.theme-empire .markdown-body h2:first-child {
+  margin-top: 0;
+}
+
+.theme-empire .markdown-body h2::before {
+  content: '▌';
+  color: #c41c1c;
+  margin-right: 0.25rem;
+}
+
+.theme-empire .markdown-body h3 {
+  color: #a8b8d0;
+  font-family: Orbitron, var(--mono);
+  font-weight: 500;
+  text-transform: uppercase;
+  font-size: 0.64rem;
+  letter-spacing: 0.12em;
+  margin: 0.7rem 0 0.35rem;
+}
+
+.theme-empire .markdown-body h3::before {
+  content: '› ';
+  color: #c41c1c;
+}
+
+.theme-empire .markdown-body p {
+  margin: 0.4rem 0;
+  color: #b8c8e0;
+}
+
+.theme-empire .markdown-body strong {
+  color: #fff;
+  font-weight: 700;
+  text-shadow: 0 0 4px rgba(255, 255, 255, 0.15);
+}
+
+.theme-empire .markdown-body em {
+  color: #e8a030;
+  font-style: normal;
+  letter-spacing: 0.05em;
+}
+
+.theme-empire .markdown-body code {
+  background: rgba(168, 184, 216, 0.08);
+  color: #c8d4e8;
+  border: 1px solid #3a4050;
+  font-size: 0.76rem;
+}
+
+.theme-empire .markdown-body ul {
+  list-style: none;
+  margin: 0.35rem 0 0.6rem 0.35rem;
+  padding: 0;
+}
+
+.theme-empire .markdown-body ul li::before {
+  content: '◆ ';
+  color: #c41c1c;
+  font-size: 0.5rem;
+}
+
+.theme-empire .markdown-body ol {
+  margin-left: 1.1rem;
+  padding: 0;
+}
+
+.theme-empire .markdown-body ol li::marker {
+  color: #6a7488;
+  font-weight: 700;
+}
+
+.theme-empire .summary-empty {
+  color: #8898b0;
+  font-style: normal;
+  letter-spacing: 0.08em;
+}
+
+.theme-empire .summary-body.summary-loading::before,
+.theme-empire .summary-body.summary-error::before {
+  content: 'DECRYPTING IMPERIAL TRANSMISSION';
+  color: #a8b8d0;
+  border-bottom-color: #c41c1c;
+}
+
+.theme-empire .summary-body.summary-loading::after,
+.theme-empire .summary-body.summary-error::after {
+  content: 'STAND BY — SECURITY SCAN IN PROGRESS';
+  color: #6a7488;
+}
+
+.theme-empire .summary-body.summary-error::before {
+  content: 'TRANSMISSION INTERCEPTED — SECURITY BREACH';
+  color: #e03030;
+}
+
+.theme-empire .summary-body.summary-error::after {
+  content: 'REPORT TO IMPERIAL COMMAND IMMEDIATELY';
+  color: #c41c1c;
+}
+
+.theme-empire .summary-body.summary-loading,
+.theme-empire .summary-body.summary-error {
+  justify-content: flex-start;
+  color: #b8c8e0;
+}
+
+.theme-empire .summary-body.summary-error {
+  color: #e8a0a0;
+  border-left-color: #e03030;
+}
+
+.theme-empire .summary-body.summary-loading .markdown-body,
+.theme-empire .summary-body.summary-error .markdown-body {
+  display: none;
+}
+
+/* --- Kawaii Mail (Japanese cute aesthetic) --- */
+.kawaii-panel-header,
+.kawaii-panel-footer {
+  display: none;
+}
+
+.summary-crt-chassis:has(.theme-kawaiimail) {
+  background: linear-gradient(165deg, #ffe8f4 0%, #ffd6ec 35%, #f8d4ff 70%, #ffe0f0 100%);
+  border-radius: 20px;
+  padding: 0.65rem 0.85rem 0.6rem;
+  box-shadow:
+    inset 0 0 0 3px #fff,
+    inset 0 0 0 5px #ffb8d8,
+    0 12px 28px rgba(255, 140, 190, 0.35);
+  border: 3px solid #ff9ec8;
+}
+
+.summary-crt-chassis:has(.theme-kawaiimail) .crt-bezel-top,
+.summary-crt-chassis:has(.theme-kawaiimail) .crt-bezel-bottom {
+  background: linear-gradient(180deg, #fff5fa 0%, #ffd8ec 100%);
+  border: 2px solid #ffb0d0;
+  border-radius: 16px;
+}
+
+.summary-crt-chassis:has(.theme-kawaiimail) .crt-nameplate {
+  border: 2px solid #ffb8d8;
+  background: linear-gradient(180deg, #fff, #ffe8f4);
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(255, 150, 190, 0.25);
+}
+
+.summary-crt-chassis:has(.theme-kawaiimail) .crt-sony {
+  font-size: 0;
+}
+
+.summary-crt-chassis:has(.theme-kawaiimail) .crt-sony::after {
+  content: '♡ メールちゃん';
+  font-family: 'Zen Maru Gothic', 'M PLUS Rounded 1c', sans-serif;
+  font-size: 0.58rem;
+  font-weight: 700;
+  color: #e868a8;
+  letter-spacing: 0.08em;
+}
+
+.summary-crt-chassis:has(.theme-kawaiimail) .crt-rgb-r { background: #ff8ec8; }
+.summary-crt-chassis:has(.theme-kawaiimail) .crt-rgb-g { background: #a8f0d8; }
+.summary-crt-chassis:has(.theme-kawaiimail) .crt-rgb-b { background: #c8b0ff; }
+
+.summary-crt-chassis:has(.theme-kawaiimail) .crt-power-led {
+  background: #ff8ec8;
+  box-shadow: 0 0 10px rgba(255, 142, 200, 0.85);
+}
+
+.summary-crt-chassis:has(.theme-kawaiimail) .crt-power-label {
+  color: #d86898;
+  letter-spacing: 0.06em;
+}
+
+.summary-crt-chassis:has(.theme-kawaiimail) .crt-screen-well {
+  border-radius: 18px;
+  border: 3px solid #ffc0dc;
+  box-shadow: inset 0 0 16px rgba(255, 180, 220, 0.2);
+}
+
+.summary-viewport.theme-kawaiimail {
+  display: flex;
+  flex-direction: column;
+  border: none;
+  border-radius: 16px;
+  background: linear-gradient(180deg, #fff8fc 0%, #fff0f8 50%, #ffe8f4 100%);
+  padding: 0;
+  box-shadow: inset 0 0 30px rgba(255, 200, 230, 0.35);
+  overflow: hidden;
+}
+
+.summary-viewport.theme-kawaiimail::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(circle at 8% 12%, rgba(255, 182, 210, 0.35) 0, transparent 22%),
+    radial-gradient(circle at 92% 18%, rgba(200, 176, 255, 0.28) 0, transparent 20%),
+    radial-gradient(circle at 85% 88%, rgba(168, 240, 216, 0.25) 0, transparent 18%),
+    radial-gradient(circle at 12% 85%, rgba(255, 200, 220, 0.3) 0, transparent 20%);
+}
+
+.summary-viewport.theme-kawaiimail::after {
+  content: '♡ ONLINE ♡';
+  position: absolute;
+  top: 0.45rem;
+  right: 0.65rem;
+  z-index: 4;
+  font-family: 'M PLUS Rounded 1c', 'Zen Maru Gothic', sans-serif;
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: #e878a8;
+  pointer-events: none;
+}
+
+.theme-kawaiimail .kawaii-panel-header,
+.theme-kawaiimail .kawaii-panel-footer {
+  display: block;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 2;
+  font-family: 'Zen Maru Gothic', 'M PLUS Rounded 1c', sans-serif;
+  user-select: none;
+  pointer-events: none;
+}
+
+.theme-kawaiimail .kw-sparkle-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.65rem;
+  padding: 0.55rem 0.75rem 0.3rem;
+  background: linear-gradient(90deg, #ffd0e8, #ffe0f4, #e8d8ff, #ffe0f4, #ffd0e8);
+  border-bottom: 2px dashed #ffb8d8;
+}
+
+.theme-kawaiimail .kw-sparkle {
+  color: #fff;
+  font-size: 0.75rem;
+  text-shadow: 0 0 6px rgba(255, 120, 180, 0.6);
+}
+
+.theme-kawaiimail .kw-title-en {
+  color: #d84888;
+  font-family: 'M PLUS Rounded 1c', sans-serif;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  text-shadow: 0 1px 0 #fff, 0 2px 8px rgba(255, 120, 170, 0.35);
+}
+
+.theme-kawaiimail .kw-title-jp {
+  color: #9868c8;
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.theme-kawaiimail .kw-sub-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.4rem 0.65rem;
+  background: rgba(255, 255, 255, 0.65);
+}
+
+.theme-kawaiimail .kw-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.2rem 0.55rem;
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  border-radius: 999px;
+  border: 2px solid #fff;
+  box-shadow: 0 2px 6px rgba(200, 120, 160, 0.2);
+}
+
+.theme-kawaiimail .kw-badge-pink {
+  background: linear-gradient(180deg, #ffb8d8, #ff98c0);
+  color: #fff;
+}
+
+.theme-kawaiimail .kw-badge-lavender {
+  background: linear-gradient(180deg, #d8c0ff, #c0a0f0);
+  color: #fff;
+}
+
+.theme-kawaiimail .kw-badge-mint {
+  background: linear-gradient(180deg, #b8f0dc, #98e8c8);
+  color: #3a7868;
+}
+
+.theme-kawaiimail .kw-footer-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.75rem;
+  background: linear-gradient(90deg, #ffe8f4, #f0e0ff, #ffe8f4);
+  border-top: 2px dashed #ffb8d8;
+}
+
+.theme-kawaiimail .kw-heart {
+  color: #ff78a8;
+  font-size: 0.85rem;
+  text-shadow: 0 0 6px rgba(255, 120, 168, 0.45);
+}
+
+.theme-kawaiimail .kw-footer-text {
+  color: #b86898;
+  font-size: 0.6rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.theme-kawaiimail .summary-body {
+  flex: 1;
+  position: relative;
+  z-index: 1;
+  background: transparent;
+  color: #5a4868;
+  padding: 0.9rem 1rem 1.05rem;
+  font-family: 'Zen Maru Gothic', 'M PLUS Rounded 1c', sans-serif;
+  font-size: 0.88rem;
+  line-height: 1.65;
+  letter-spacing: 0.02em;
+}
+
+.theme-kawaiimail .summary-body::before {
+  content: '✿ メールのおまとめ ✿';
+  display: block;
+  color: #d878a8;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-align: center;
+  margin-bottom: 0.65rem;
+  padding-bottom: 0.45rem;
+  border-bottom: 2px dotted #ffc8e0;
+}
+
+.theme-kawaiimail .summary-body::after {
+  content: '♡ お疲れさまでした ♡';
+  display: block;
+  margin-top: 0.9rem;
+  padding-top: 0.5rem;
+  border-top: 2px dotted #ffc8e0;
+  color: #c878b0;
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-align: center;
+}
+
+.theme-kawaiimail .markdown-body h2 {
+  color: #d85898;
+  font-weight: 700;
+  font-size: 0.82rem;
+  letter-spacing: 0.08em;
+  margin: 1rem 0 0.45rem;
+  padding: 0.3rem 0.65rem;
+  background: linear-gradient(90deg, rgba(255, 184, 216, 0.45), transparent);
+  border-radius: 0 999px 999px 0;
+  border-left: 4px solid #ff98c0;
+}
+
+.theme-kawaiimail .markdown-body h2:first-child {
+  margin-top: 0;
+}
+
+.theme-kawaiimail .markdown-body h2::before {
+  content: '♡ ';
+  color: #ff88b8;
+}
+
+.theme-kawaiimail .markdown-body h3 {
+  color: #8868b8;
+  font-weight: 700;
+  font-size: 0.76rem;
+  letter-spacing: 0.06em;
+  margin: 0.75rem 0 0.35rem;
+}
+
+.theme-kawaiimail .markdown-body h3::before {
+  content: '✿ ';
+  color: #c8a0e8;
+}
+
+.theme-kawaiimail .markdown-body p {
+  margin: 0.45rem 0;
+  color: #5a4868;
+}
+
+.theme-kawaiimail .markdown-body strong {
+  color: #c84888;
+  font-weight: 700;
+}
+
+.theme-kawaiimail .markdown-body em {
+  color: #68a898;
+  font-style: normal;
+}
+
+.theme-kawaiimail .markdown-body code {
+  background: rgba(255, 200, 230, 0.45);
+  color: #985878;
+  border: 1px solid #ffc8e0;
+  border-radius: 8px;
+  font-family: 'M PLUS Rounded 1c', var(--mono);
+  font-size: 0.8rem;
+}
+
+.theme-kawaiimail .markdown-body ul {
+  list-style: none;
+  margin: 0.4rem 0 0.65rem 0.35rem;
+  padding: 0;
+}
+
+.theme-kawaiimail .markdown-body ul li {
+  position: relative;
+  padding-left: 1.1rem;
+  margin: 0.3rem 0;
+}
+
+.theme-kawaiimail .markdown-body ul li::before {
+  content: '♡';
+  position: absolute;
+  left: 0;
+  color: #ff98c0;
+  font-size: 0.65rem;
+  top: 0.15rem;
+}
+
+.theme-kawaiimail .markdown-body ol {
+  margin-left: 1.2rem;
+  padding: 0;
+}
+
+.theme-kawaiimail .markdown-body ol li::marker {
+  color: #c898d8;
+  font-weight: 700;
+}
+
+.theme-kawaiimail .summary-empty {
+  color: #b888b0;
+  font-style: normal;
+  text-align: center;
+}
+
+.theme-kawaiimail .summary-body.summary-loading::before,
+.theme-kawaiimail .summary-body.summary-error::before {
+  content: '☆ ちょっとまってね… ☆';
+  color: #d878a8;
+  border-bottom-color: #ffc8e0;
+}
+
+.theme-kawaiimail .summary-body.summary-loading::after,
+.theme-kawaiimail .summary-body.summary-error::after {
+  content: '♡ まもなくできあがるよ ♡';
+  color: #a878c0;
+}
+
+.theme-kawaiimail .summary-body.summary-error::before {
+  content: '｡ﾟ( ﾟ>﹏<ﾟ)ﾟ｡ あれれ…';
+  color: #e87888;
+}
+
+.theme-kawaiimail .summary-body.summary-error::after {
+  content: 'もういちどためしてみてね';
+  color: #c87898;
+}
+
+.theme-kawaiimail .summary-body.summary-loading,
+.theme-kawaiimail .summary-body.summary-error {
+  justify-content: flex-start;
+  color: #5a4868;
+  text-align: center;
+}
+
+.theme-kawaiimail .summary-body.summary-error {
+  color: #985868;
+}
+
+.theme-kawaiimail .summary-body.summary-loading .markdown-body,
+.theme-kawaiimail .summary-body.summary-error .markdown-body {
+  display: none;
+}
+
+/* --- NASA Mission Control (1970s) --- */
+.nasa70-panel-header,
+.nasa70-panel-footer {
+  display: none;
+}
+
+.summary-crt-chassis:has(.theme-nasa70s) {
+  background: linear-gradient(180deg, #d4c8b0 0%, #c0b49c 40%, #a89c88 100%);
+  border-radius: 4px;
+  padding: 0.6rem 0.8rem 0.55rem;
+  box-shadow:
+    inset 0 0 0 2px #8a8070,
+    inset 0 0 0 4px #e8e0d0,
+    0 10px 26px rgba(0, 0, 0, 0.4);
+  border: 4px solid #706860;
+}
+
+.summary-crt-chassis:has(.theme-nasa70s) .crt-bezel-top,
+.summary-crt-chassis:has(.theme-nasa70s) .crt-bezel-bottom {
+  background: linear-gradient(180deg, #ccc0a8 0%, #b0a490 100%);
+  border: 2px solid #686058;
+  border-radius: 3px;
+  box-shadow: inset 0 2px 4px rgba(255, 255, 255, 0.15);
+}
+
+.summary-crt-chassis:has(.theme-nasa70s) .crt-nameplate {
+  border: 2px solid #686058;
+  background: linear-gradient(180deg, #e0d8c8, #c8bca8);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+
+.summary-crt-chassis:has(.theme-nasa70s) .crt-sony {
+  font-size: 0;
+}
+
+.summary-crt-chassis:has(.theme-nasa70s) .crt-sony::after {
+  content: 'MSC HOUSTON';
+  font-family: 'Share Tech Mono', var(--mono);
+  font-size: 0.52rem;
+  font-weight: 400;
+  color: #1a2840;
+  letter-spacing: 0.18em;
+}
+
+.summary-crt-chassis:has(.theme-nasa70s) .crt-rgb-r { background: #c03030; }
+.summary-crt-chassis:has(.theme-nasa70s) .crt-rgb-g { background: #38c838; }
+.summary-crt-chassis:has(.theme-nasa70s) .crt-rgb-b { background: #e8c030; }
+
+.summary-crt-chassis:has(.theme-nasa70s) .crt-power-led {
+  background: #38c838;
+  box-shadow: 0 0 8px rgba(56, 200, 56, 0.75);
+}
+
+.summary-crt-chassis:has(.theme-nasa70s) .crt-power-label {
+  color: #3a3830;
+  letter-spacing: 0.1em;
+}
+
+.summary-crt-chassis:has(.theme-nasa70s) .crt-screen-well {
+  border: 4px solid #2a2820;
+  border-radius: 2px;
+  box-shadow: inset 0 0 20px rgba(0, 0, 0, 0.65);
+}
+
+.summary-viewport.theme-nasa70s {
+  display: flex;
+  flex-direction: column;
+  border: 3px solid #1a1a14;
+  border-radius: 2px;
+  background: #020804;
+  padding: 0;
+  box-shadow:
+    inset 0 0 50px rgba(0, 0, 0, 0.9),
+    inset 0 0 60px rgba(56, 200, 56, 0.05);
+  overflow: hidden;
+}
+
+.summary-viewport.theme-nasa70s::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+  background: repeating-linear-gradient(
+    180deg,
+    transparent 0,
+    transparent 2px,
+    rgba(0, 0, 0, 0.14) 2px,
+    rgba(0, 0, 0, 0.14) 4px
+  );
+  opacity: 0.55;
+}
+
+.summary-viewport.theme-nasa70s::after {
+  content: '● NOMINAL';
+  position: absolute;
+  top: 0.4rem;
+  right: 0.55rem;
+  z-index: 4;
+  font-family: 'Share Tech Mono', var(--mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.14em;
+  color: #38c838;
+  text-shadow: 0 0 8px rgba(56, 200, 56, 0.55);
+  pointer-events: none;
+}
+
+.theme-nasa70s .nasa70-panel-header,
+.theme-nasa70s .nasa70-panel-footer {
+  display: block;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 2;
+  font-family: 'Share Tech Mono', 'Courier New', Courier, var(--mono);
+  user-select: none;
+  pointer-events: none;
+}
+
+.theme-nasa70s .n70-console-stripe {
+  height: 5px;
+  background: repeating-linear-gradient(
+    90deg,
+    #1a2840,
+    #1a2840 16px,
+    #c03030 16px,
+    #c03030 18px,
+    #e8c030 18px,
+    #e8c030 20px
+  );
+  border-bottom: 1px solid #2a2820;
+}
+
+.theme-nasa70s .n70-console-stripe-bottom {
+  border-bottom: none;
+  border-top: 1px solid #2a2820;
+}
+
+.theme-nasa70s .n70-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.4rem 0.75rem;
+  padding: 0.5rem 0.75rem 0.3rem;
+  background: linear-gradient(180deg, #1a2840 0%, #0c1420 100%);
+  border-bottom: 2px solid #283850;
+}
+
+.theme-nasa70s .n70-nasa {
+  color: #e8ecf0;
+  font-size: 1rem;
+  font-weight: 400;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  text-shadow: 0 0 8px rgba(200, 220, 240, 0.2);
+}
+
+.theme-nasa70s .n70-mcc {
+  color: #a8c0d8;
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.theme-nasa70s .n70-era {
+  margin-left: auto;
+  color: #e8c030;
+  font-size: 0.58rem;
+  letter-spacing: 0.12em;
+  padding: 0.12rem 0.4rem;
+  border: 1px solid #a08020;
+  background: rgba(232, 192, 48, 0.12);
+}
+
+.theme-nasa70s .n70-sys-line,
+.theme-nasa70s .n70-footer-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.3rem 0.5rem;
+  padding: 0.35rem 0.75rem;
+  background: #040a06;
+  font-size: 0.58rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border-bottom: 1px solid #142818;
+}
+
+.theme-nasa70s .n70-footer-line {
+  border-bottom: none;
+  border-top: 1px solid #142818;
+  color: #4a7a4a;
+}
+
+.theme-nasa70s .n70-sys {
+  color: #5a9a5a;
+}
+
+.theme-nasa70s .n70-bright {
+  color: #68d868;
+  text-shadow: 0 0 5px rgba(56, 200, 56, 0.35);
+}
+
+.theme-nasa70s .n70-capcom {
+  color: #a8c8e8;
+}
+
+.theme-nasa70s .n70-go {
+  margin-left: auto;
+  color: #040a06;
+  background: #38c838;
+  font-weight: 400;
+  padding: 0.1rem 0.45rem;
+  border: 1px solid #28a828;
+  box-shadow: 0 0 8px rgba(56, 200, 56, 0.45);
+}
+
+.theme-nasa70s .n70-dim {
+  color: #3a5a3a;
+}
+
+.theme-nasa70s .n70-sep {
+  color: #2a4a2a;
+}
+
+.theme-nasa70s .summary-body {
+  flex: 1;
+  position: relative;
+  z-index: 1;
+  background: #020804;
+  color: #38c838;
+  padding: 0.8rem 0.9rem 1rem;
+  font-family: 'Share Tech Mono', 'Courier New', Courier, var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.48;
+  letter-spacing: 0.04em;
+  text-shadow: 0 0 2px rgba(56, 200, 56, 0.35);
+}
+
+.theme-nasa70s .summary-body::before {
+  content: 'TELEMETRY — INCOMING MAIL SUMMARY DATA';
+  display: block;
+  color: #5a9a5a;
+  font-size: 0.6rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin-bottom: 0.6rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px dashed #1a3a1a;
+}
+
+.theme-nasa70s .summary-body::after {
+  content: 'END DATA SET — MISSION CONTROL OUT';
+  display: block;
+  margin-top: 0.85rem;
+  padding-top: 0.5rem;
+  border-top: 1px dashed #1a3a1a;
+  color: #e8c030;
+  font-size: 0.58rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.theme-nasa70s .markdown-body h2 {
+  color: #68d868;
+  font-weight: 400;
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  margin: 1rem 0 0.45rem;
+  padding: 0.2rem 0;
+  border-top: 1px solid #1a3a1a;
+  border-bottom: 1px solid #1a3a1a;
+}
+
+.theme-nasa70s .markdown-body h2:first-child {
+  margin-top: 0;
+  border-top: none;
+}
+
+.theme-nasa70s .markdown-body h2::before {
+  content: '>> ';
+  color: #e8c030;
+}
+
+.theme-nasa70s .markdown-body h3 {
+  color: #5aba5a;
+  font-weight: 400;
+  text-transform: uppercase;
+  font-size: 0.66rem;
+  letter-spacing: 0.1em;
+  margin: 0.7rem 0 0.35rem;
+}
+
+.theme-nasa70s .markdown-body h3::before {
+  content: '> ';
+  color: #3a6a3a;
+}
+
+.theme-nasa70s .markdown-body p {
+  margin: 0.4rem 0;
+  color: #38c838;
+  counter-increment: n70line;
+}
+
+.theme-nasa70s .summary-body {
+  counter-reset: n70line;
+}
+
+.theme-nasa70s .markdown-body p::before {
+  content: counter(n70line, decimal-leading-zero) ' ';
+  color: #1a4a1a;
+  font-size: 0.72rem;
+  margin-right: 0.3rem;
+}
+
+.theme-nasa70s .markdown-body strong {
+  color: #a8f0a8;
+  font-weight: 400;
+  text-shadow: 0 0 4px rgba(104, 216, 104, 0.35);
+}
+
+.theme-nasa70s .markdown-body em {
+  color: #e8c030;
+  font-style: normal;
+}
+
+.theme-nasa70s .markdown-body code {
+  background: rgba(56, 200, 56, 0.08);
+  color: #68d868;
+  border: 1px solid #1a4a1a;
+  letter-spacing: 0.05em;
+}
+
+.theme-nasa70s .markdown-body ul {
+  list-style: none;
+  margin: 0.35rem 0 0.6rem 0.5rem;
+  padding: 0;
+}
+
+.theme-nasa70s .markdown-body ul li::before {
+  content: '+ ';
+  color: #e8c030;
+  font-weight: 400;
+}
+
+.theme-nasa70s .markdown-body ol {
+  margin-left: 1.1rem;
+  padding: 0;
+}
+
+.theme-nasa70s .markdown-body ol li::marker {
+  color: #3a6a3a;
+}
+
+.theme-nasa70s .summary-empty {
+  color: #5a9a5a;
+  font-style: normal;
+  letter-spacing: 0.06em;
+}
+
+.theme-nasa70s .summary-body.summary-loading::before,
+.theme-nasa70s .summary-body.summary-error::before {
+  content: 'PROCESSING TELEMETRY — STAND BY';
+  color: #e8c030;
+  border-bottom-color: #38c838;
+}
+
+.theme-nasa70s .summary-body.summary-loading::after,
+.theme-nasa70s .summary-body.summary-error::after {
+  content: 'FLIGHT DIRECTOR IS GO FOR SUMMARY';
+  color: #5a9a5a;
+}
+
+.theme-nasa70s .summary-body.summary-error::before {
+  content: 'ANOMALY DETECTED — NO-GO CONDITION';
+  color: #c03030;
+  text-shadow: 0 0 4px rgba(192, 48, 48, 0.4);
+}
+
+.theme-nasa70s .summary-body.summary-error::after {
+  content: 'RECYCLE AND RETRANSMIT';
+  color: #e87850;
+}
+
+.theme-nasa70s .summary-body.summary-loading,
+.theme-nasa70s .summary-body.summary-error {
+  justify-content: flex-start;
+  color: #38c838;
+}
+
+.theme-nasa70s .summary-body.summary-error {
+  color: #c84848;
+  text-shadow: 0 0 3px rgba(200, 72, 72, 0.35);
+}
+
+.theme-nasa70s .summary-body.summary-loading .markdown-body,
+.theme-nasa70s .summary-body.summary-error .markdown-body,
+.theme-nasa70s .summary-body.summary-loading p::before,
+.theme-nasa70s .summary-body.summary-error p::before {
   display: none;
 }

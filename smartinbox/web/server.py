@@ -150,6 +150,30 @@ def create_app(core: SmartInboxCore) -> FastAPI:
             request, "senders.html", {"version": __version__}
         )
 
+    @app.get("/calendar", response_class=HTMLResponse)
+    async def calendar_page(request: Request):
+        return TEMPLATES.TemplateResponse(
+            request, "calendar.html", {"version": __version__}
+        )
+
+    @app.get("/process", response_class=HTMLResponse)
+    async def process_page(request: Request):
+        return TEMPLATES.TemplateResponse(
+            request, "process.html", {"version": __version__}
+        )
+
+    @app.get("/storage", response_class=HTMLResponse)
+    async def storage_page(request: Request):
+        return TEMPLATES.TemplateResponse(
+            request, "storage.html", {"version": __version__}
+        )
+
+    @app.get("/search", response_class=HTMLResponse)
+    async def search_page(request: Request):
+        return TEMPLATES.TemplateResponse(
+            request, "search.html", {"version": __version__}
+        )
+
     def _recordings_cache_dir() -> str:
         return str(core.chatterbox_tts_config.get("cache_dir", "localrecordings"))
 
@@ -162,9 +186,17 @@ def create_app(core: SmartInboxCore) -> FastAPI:
         return JSONResponse(await core.health())
 
     @app.post("/api/poll")
-    async def api_poll():
-        count = await core.poll_inbox()
-        return JSONResponse({"ok": True, "new_count": count})
+    async def api_poll(request: Request):
+        detailed = True
+        try:
+            body = await request.json()
+            if isinstance(body, dict) and "detailed" in body:
+                detailed = bool(body.get("detailed"))
+        except Exception:
+            pass
+        core.add_log("Inbox check — Check now requested", "info")
+        count = await core.poll_inbox(detailed=detailed)
+        return JSONResponse({"ok": True, "new_count": count, "detailed": detailed})
 
     @app.post("/api/inbox/empty")
     async def api_inbox_empty():
@@ -301,6 +333,8 @@ def create_app(core: SmartInboxCore) -> FastAPI:
             "mail_accounts": mail_accounts_status(core.conn),
             "chatterbox_tts": core.get_snapshot()["chatterbox_tts"],
             "demo_mode": core.get_demo_mode(),
+            "calendar_extract_concurrency": core.get_calendar_extract_concurrency(),
+            "calendar_ollama_main_gpu": core.get_calendar_ollama_main_gpu(),
         })
 
     @app.post("/api/settings")
@@ -321,6 +355,16 @@ def create_app(core: SmartInboxCore) -> FastAPI:
             core.set_other_alert_mode(body.get("other_alert_mode"))
         if "demo_mode" in body:
             core.set_demo_mode(bool(body.get("demo_mode")))
+        if "calendar_extract_concurrency" in body:
+            try:
+                core.set_calendar_extract_concurrency(body["calendar_extract_concurrency"])
+            except ValueError as e:
+                return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+        if "calendar_ollama_main_gpu" in body:
+            try:
+                core.set_calendar_ollama_main_gpu(body.get("calendar_ollama_main_gpu"))
+            except ValueError as e:
+                return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
         return JSONResponse({
             "ok": True,
             "poll_interval": core.get_poll_interval(),
@@ -329,6 +373,8 @@ def create_app(core: SmartInboxCore) -> FastAPI:
             "important_alert_mode": core.get_important_alert_mode(),
             "other_alert_mode": core.get_other_alert_mode(),
             "demo_mode": core.get_demo_mode(),
+            "calendar_extract_concurrency": core.get_calendar_extract_concurrency(),
+            "calendar_ollama_main_gpu": core.get_calendar_ollama_main_gpu(),
         })
 
     @app.get("/api/important-senders")
@@ -365,6 +411,155 @@ def create_app(core: SmartInboxCore) -> FastAPI:
             "upvoted": ranked.get("upvoted") or [],
             "downvoted": ranked.get("downvoted") or [],
         })
+
+    @app.get("/api/storage")
+    async def api_storage():
+        view = core.get_storage_view()
+        return JSONResponse({"ok": True, **view})
+
+    @app.get("/api/process")
+    async def api_process():
+        view = core.get_process_view()
+        return JSONResponse({"ok": True, **view})
+
+    @app.post("/api/process/fetch")
+    async def api_process_fetch(request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        unit = str(body.get("unit") or "days").strip().lower()
+        lookback_raw = body.get("lookback", body.get("days" if unit == "days" else "hours", 5))
+        try:
+            lookback = int(lookback_raw)
+        except (TypeError, ValueError):
+            lookback = 5
+        if unit == "hours":
+            started = core.start_mail_fetch(hours=lookback)
+        else:
+            started = core.start_mail_fetch(days=lookback)
+        view = core.get_process_view()
+        if not started and not core.get_demo_mode():
+            if core.mail_fetch_running():
+                return JSONResponse(
+                    {
+                        "ok": False,
+                        "error": "A mail fetch is already running",
+                        **view,
+                    },
+                    status_code=409,
+                )
+            return JSONResponse(
+                {"ok": False, "error": "Could not start mail fetch", **view},
+                status_code=400,
+            )
+        return JSONResponse({"ok": True, **view})
+
+    @app.get("/api/search")
+    async def api_search(request: Request):
+        query = str(request.query_params.get("q") or "").strip()
+        try:
+            limit = int(request.query_params.get("limit", "50"))
+        except (TypeError, ValueError):
+            limit = 50
+        try:
+            offset = int(request.query_params.get("offset", "0"))
+        except (TypeError, ValueError):
+            offset = 0
+        if not query:
+            return JSONResponse(
+                {
+                    "ok": True,
+                    "query": "",
+                    "results": [],
+                    "total": 0,
+                    "limit": max(1, min(limit, 200)),
+                    "offset": max(0, offset),
+                    "demo_mode": core.get_demo_mode(),
+                }
+            )
+        data = core.search_emails(query, limit=limit, offset=offset)
+        return JSONResponse({"ok": True, **data})
+
+    @app.post("/api/search/emails/{email_id}/calendar")
+    async def api_search_email_calendar(email_id: str, request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        force = bool(body.get("force", True))
+        try:
+            result = await core.extract_calendar_for_email_id(email_id, force=force)
+        except ValueError as e:
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=404)
+        return JSONResponse({"ok": True, **result})
+
+    @app.get("/api/calendar")
+    async def api_calendar(request: Request):
+        try:
+            list_days = int(request.query_params.get("list_days", "30"))
+        except (TypeError, ValueError):
+            list_days = 30
+        view_mode = request.query_params.get("view", "week")
+        anchor_date = request.query_params.get("anchor") or None
+        view = core.get_calendar_view(
+            list_days=list_days,
+            view_mode=view_mode,
+            anchor_date=anchor_date,
+        )
+        return JSONResponse({"ok": True, **view})
+
+    @app.post("/api/calendar/backfill")
+    async def api_calendar_backfill(request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        try:
+            days = int(body.get("days", 5))
+        except (TypeError, ValueError):
+            days = 5
+        force = bool(body.get("force", False))
+        import_from_source = bool(body.get("import_from_source", False))
+        started = core.start_calendar_backfill(
+            days=days, force=force, import_from_source=import_from_source
+        )
+        try:
+            list_days = int(body.get("list_days", days))
+        except (TypeError, ValueError):
+            list_days = days
+        view = core.get_calendar_view(list_days=list_days)
+        if not started and not core.get_demo_mode():
+            if core.calendar_scan_running():
+                return JSONResponse(
+                    {
+                        "ok": False,
+                        "error": "A calendar scan is already running",
+                        **view,
+                    },
+                    status_code=409,
+                )
+        return JSONResponse({"ok": True, "started": started, **view})
+
+    @app.post("/api/calendar/events/{event_id}/vote")
+    async def api_calendar_event_vote(event_id: str, request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        vote = str(body.get("vote") or "").strip().lower()
+        if vote not in ("up", "down"):
+            return JSONResponse(
+                {"ok": False, "error": "vote must be 'up' or 'down'"},
+                status_code=400,
+            )
+        try:
+            result = core.vote_calendar_event(event_id, vote=vote)
+        except ValueError as e:
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+        if result is None:
+            return JSONResponse({"ok": False, "error": "event not found"}, status_code=404)
+        return JSONResponse({"ok": True, **result})
 
     @app.get("/api/tts/voice")
     async def api_tts_voice_get():
@@ -915,6 +1110,13 @@ def create_app(core: SmartInboxCore) -> FastAPI:
             return JSONResponse({"ok": False, "error": "not found"}, status_code=404)
         except ValueError as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+    @app.get("/api/emails/{email_id}")
+    async def api_get_email(email_id: str):
+        row = core.get_email_for_display(email_id)
+        if row is None:
+            return JSONResponse({"ok": False, "error": "email not found"}, status_code=404)
+        return JSONResponse({"ok": True, "email": row})
 
     @app.post("/api/emails/{email_id}/vote")
     async def api_vote_email(email_id: str, request: Request):

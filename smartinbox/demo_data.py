@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 _NOW = time.time()
 
@@ -209,5 +211,121 @@ def build_demo_emails() -> list[dict[str, Any]]:
             ),
             "alerted_at": None,
             "starred": 0,
+        },
+    ]
+
+
+def build_demo_calendar_events(
+    *,
+    timezone: str = "America/New_York",
+) -> list[dict[str, Any]]:
+    """Fake calendar events anchored to the current week for demo mode."""
+    try:
+        tz = ZoneInfo(timezone)
+    except Exception:
+        tz = ZoneInfo("UTC")
+    now = datetime.now(tz=tz)
+    monday = now - timedelta(days=now.weekday())
+    monday = monday.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    def at(day_offset: int, hour: int, minute: int = 0) -> float:
+        dt = monday + timedelta(days=day_offset, hours=hour, minutes=minute)
+        return dt.timestamp()
+
+    return [
+        {
+            "id": "demo-cal-001",
+            "email_id": "demo-001",
+            "title": "[DEMO] Royal tea ceremony",
+            "description": "Sample event from demo prince email.",
+            "location": "Fontasia Embassy (fictional)",
+            "event_start": at(1, 14, 0),
+            "event_end": at(1, 15, 0),
+            "source_text": "tea ceremony Tuesday at 2pm",
+            "sender": "Prince of Fontasia <demo.prince@fakemail.example>",
+            "subject": "[DEMO] Your royal inbox awaits",
+            "upvotes": 1,
+            "downvotes": 0,
+            "score": 1,
+            "last_vote": "up",
+            "hidden": False,
+            "created_at": _NOW,
+            "updated_at": _NOW,
+        },
+        {
+            "id": "demo-cal-002",
+            "email_id": "demo-003",
+            "title": "[DEMO] Package delivery window",
+            "description": "Demo shipment ETA for screenshots.",
+            "location": None,
+            "event_start": at(2, 10, 0),
+            "event_end": None,
+            "source_text": "delivery Wednesday between 10am and noon",
+            "sender": "SmartInbox QA Bot <qa-bot@smartinbox.demo>",
+            "subject": "[DEMO] Shipment arriving Wednesday",
+            "upvotes": 0,
+            "downvotes": 0,
+            "score": 0,
+            "last_vote": None,
+            "hidden": False,
+            "created_at": _NOW,
+            "updated_at": _NOW,
+        },
+        {
+            "id": "demo-cal-003",
+            "email_id": "demo-004",
+            "title": "[DEMO] Team standup",
+            "description": "Recurring meeting extracted from demo mail.",
+            "location": "Video call",
+            "event_start": at(3, 9, 30),
+            "event_end": at(3, 10, 0),
+            "source_text": "standup Thursday 9:30am",
+            "sender": "Janet from Accounting <janet.demo@notarealcompany.test>",
+            "subject": "[DEMO] Thursday standup reminder",
+            "upvotes": 0,
+            "downvotes": 0,
+            "score": 0,
+            "last_vote": None,
+            "hidden": False,
+            "created_at": _NOW,
+            "updated_at": _NOW,
+        },
+        {
+            "id": "demo-cal-004",
+            "email_id": "demo-005",
+            "title": "[DEMO] Dentist checkup",
+            "description": "Health appointment sample.",
+            "location": "Demo Dental Clinic",
+            "event_start": at(4, 15, 0),
+            "event_end": at(4, 16, 0),
+            "source_text": "appointment Friday June at 3pm",
+            "sender": "The Weather Cube <cube@fake-weather.demo>",
+            "subject": "[DEMO] Weekend forecast (with appointment)",
+            "upvotes": 0,
+            "downvotes": 1,
+            "score": -1,
+            "last_vote": "down",
+            "hidden": True,
+            "created_at": _NOW,
+            "updated_at": _NOW,
+        },
+        {
+            "id": "demo-cal-005",
+            "email_id": "demo-002",
+            "title": "[DEMO] Wire transfer deadline",
+            "description": "Satirical junk-mail deadline for calendar styling.",
+            "location": None,
+            "event_start": at(5, 23, 59),
+            "event_end": None,
+            "source_text": "respond by Saturday midnight",
+            "sender": "Totally Real Business Person <definitely.real@demo-mail.fake>",
+            "subject": "[DEMO] URGENT: Please verify your demo fortune",
+            "upvotes": 0,
+            "downvotes": 0,
+            "score": 0,
+            "last_vote": None,
+            "hidden": False,
+            "created_at": _NOW,
+            "updated_at": _NOW,
         },
     ]

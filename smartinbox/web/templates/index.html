@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SmartInbox</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=11">
-  <link rel="stylesheet" href="/static/css/summary-themes.css?v=21">
+  <link rel="stylesheet" href="/static/css/styles.css?v=19">
+  <link rel="stylesheet" href="/static/css/summary-themes.css?v=27">
 </head>
 <body>
   <div class="app">
@@ -14,10 +14,14 @@
       <p class="subtitle">Gmail IMAP summaries with Ollama and Chatterbox voice alerts</p>
       <nav class="site-nav" aria-label="Site">
         <a href="/" aria-current="page">Inbox</a>
+        <a href="/search">Search</a>
         <a href="/settings">Settings</a>
         <a href="/llm">LLM</a>
         <a href="/phrases">Phrases</a>
         <a href="/senders">Senders</a>
+        <a href="/calendar">Calendar</a>
+        <a href="/process">Process</a>
+        <a href="/storage">Storage</a>
       </nav>
       <p class="status-line" id="conn-status">Connecting…</p>
     </header>
@@ -28,7 +32,7 @@
           <h2>Inbox</h2>
           <div class="inbox-head-actions">
             <span class="panel-count" id="inbox-count">0 emails</span>
-            <button type="button" class="btn btn-secondary btn-small" id="btn-empty-inbox">Empty</button>
+            <button type="button" class="btn btn-secondary btn-small" id="btn-empty-inbox">Hide all</button>
             <button type="button" class="btn btn-primary" id="btn-poll">Check now</button>
           </div>
         </div>
@@ -61,6 +65,12 @@
               <option value="mainframe">1970s mainframe</option>
               <option value="pdp11">PDP-11 terminal</option>
               <option value="mailcraft">MailCraft</option>
+              <option value="mailtrek">Mail Trek (LCARS)</option>
+              <option value="weylandyutani">Weyland-Yutani Corp</option>
+              <option value="reddwarf">Red Dwarf</option>
+              <option value="empire">Galactic Empire</option>
+              <option value="kawaiimail">Kawaii Mail</option>
+              <option value="nasa70s">NASA Mission Control</option>
               <option value="pacmail">PacMail</option>
               <option value="lsmail">Leisure Suit Mailman</option>
               <option value="c64">Commodore 64</option>
@@ -105,6 +115,101 @@
             alt=""
             aria-hidden="true"
           />
+          <div class="nasa70-panel-header" aria-hidden="true">
+            <div class="n70-console-stripe"></div>
+            <div class="n70-title-row">
+              <span class="n70-nasa">NASA</span>
+              <span class="n70-mcc">MISSION CONTROL CENTER</span>
+              <span class="n70-era">1970s</span>
+            </div>
+            <div class="n70-sys-line">
+              <span class="n70-bright">HOUSTON, TEXAS</span>
+              <span class="n70-sep">·</span>
+              <span class="n70-sys">MAIL SUMMARY CONSOLE</span>
+              <span class="n70-sep">·</span>
+              <span class="n70-capcom">CAPCOM</span>
+              <span class="n70-go">GO</span>
+            </div>
+          </div>
+          <div class="kawaii-panel-header" aria-hidden="true">
+            <div class="kw-sparkle-row">
+              <span class="kw-sparkle">✦</span>
+              <span class="kw-title-en">KAWAII MAIL</span>
+              <span class="kw-title-jp">かわいいメール</span>
+              <span class="kw-sparkle">✦</span>
+            </div>
+            <div class="kw-sub-row">
+              <span class="kw-badge kw-badge-pink">♡ INBOX</span>
+              <span class="kw-badge kw-badge-lavender">✿ SUMMARY</span>
+              <span class="kw-badge kw-badge-mint">☆ GIRL MODE</span>
+            </div>
+          </div>
+          <div class="empire-terminal-header" aria-hidden="true">
+            <div class="imp-stripe"></div>
+            <div class="imp-lockup">
+              <span class="imp-crest"></span>
+              <div class="imp-corp">
+                <span class="imp-name">GALACTIC EMPIRE</span>
+                <span class="imp-sub">IMPERIAL COMMUNICATIONS BUREAU</span>
+              </div>
+            </div>
+            <div class="imp-sys-line">
+              <span class="imp-bright">DEATH STAR NODE 7</span>
+              <span class="imp-sep">·</span>
+              <span class="imp-sys">MAIL INTELLIGENCE DIVISION</span>
+              <span class="imp-sep">·</span>
+              <span class="imp-alert">PRIORITY ALPHA</span>
+            </div>
+          </div>
+          <div class="reddwarf-panel-header" aria-hidden="true">
+            <div class="rd-jmc-stripe"></div>
+            <div class="rd-title-row">
+              <span class="rd-ship-name">RED DWARF</span>
+              <span class="rd-jmc">JMC MINING VESSEL</span>
+            </div>
+            <div class="rd-holly-line">
+              <span class="rd-holly">HOLLY</span>
+              <span class="rd-sep">·</span>
+              <span class="rd-sys">MAIL MONITORING SYSTEM</span>
+              <span class="rd-sep">·</span>
+              <span class="rd-deck">LEVEL 147</span>
+            </div>
+          </div>
+          <div class="weyland-terminal-header" aria-hidden="true">
+            <div class="wy-hazard"></div>
+            <div class="wy-corp-lockup">
+              <span class="wy-logo-mark"></span>
+              <div class="wy-corp-text">
+                <span class="wy-corp-name">WEYLAND-YUTANI CORPORATION</span>
+                <span class="wy-corp-tag">Building Better Worlds</span>
+              </div>
+            </div>
+            <div class="wy-sys-line">
+              <span class="wy-sys wy-bright">MU/TH/UR 6000</span>
+              <span class="wy-sep">·</span>
+              <span class="wy-sys">MAIL INTERFACE 2037</span>
+              <span class="wy-sep">·</span>
+              <span class="wy-sys">NOSTROMO LINK</span>
+            </div>
+          </div>
+          <div class="mailtrek-lcars-header" aria-hidden="true">
+            <div class="mt-row mt-row-primary">
+              <div class="mt-cap mt-cap-left"></div>
+              <div class="mt-bar mt-bar-orange mt-bar-wide"></div>
+              <div class="mt-label mt-label-title">MAIL TREK</div>
+              <div class="mt-bar mt-bar-peach mt-bar-mid"></div>
+              <div class="mt-label mt-label-id">47988</div>
+              <div class="mt-elbow mt-elbow-tr"></div>
+            </div>
+            <div class="mt-row mt-row-secondary">
+              <div class="mt-chip mt-chip-blue">SUBSPACE INBOX</div>
+              <div class="mt-chip mt-chip-lavender">LCARS ACCESS</div>
+              <div class="mt-spacer-bar"></div>
+              <div class="mt-chip mt-chip-tan">UFP MAIL</div>
+              <div class="mt-bar mt-bar-red mt-bar-short"></div>
+              <div class="mt-cap mt-cap-right"></div>
+            </div>
+          </div>
           <img
             class="mailcraft-header"
             src="/static/img/mailcraft-header.svg?v=2"
@@ -124,6 +229,58 @@
 <span class="p11-dim">.</span> <span class="p11-amber">READY</span></pre>
           <div class="summary-body markdown-body" id="summary-body">
             <p class="summary-empty">Select an email to view its Ollama summary.</p>
+          </div>
+          <div class="nasa70-panel-footer" aria-hidden="true">
+            <div class="n70-footer-line">
+              <span class="n70-dim">FLIGHT</span>
+              <span class="n70-bright">TRANSMISSION RECEIVED</span>
+              <span class="n70-dim">·</span>
+              <span class="n70-dim">STATION OUT</span>
+            </div>
+            <div class="n70-console-stripe n70-console-stripe-bottom"></div>
+          </div>
+          <div class="kawaii-panel-footer" aria-hidden="true">
+            <div class="kw-footer-row">
+              <span class="kw-heart">♡</span>
+              <span class="kw-footer-text">がんばって読んでね — YOU CAN DO IT</span>
+              <span class="kw-heart">♡</span>
+            </div>
+          </div>
+          <div class="empire-terminal-footer" aria-hidden="true">
+            <div class="imp-footer-line">
+              <span class="imp-dim">TRANSMISSION LOGGED</span>
+              <span class="imp-sep">·</span>
+              <span class="imp-bright">IMPERIAL SECURITY CLEARANCE VERIFIED</span>
+            </div>
+            <div class="imp-stripe imp-stripe-bottom"></div>
+          </div>
+          <div class="reddwarf-panel-footer" aria-hidden="true">
+            <div class="rd-footer-line">
+              <span class="rd-dim">3 MILLION YEARS FROM EARTH</span>
+              <span class="rd-sep">·</span>
+              <span class="rd-bright">CREW STATUS: 1 HUMAN REMAINING</span>
+            </div>
+            <div class="rd-jmc-stripe rd-jmc-stripe-bottom"></div>
+          </div>
+          <div class="weyland-terminal-footer" aria-hidden="true">
+            <div class="wy-hazard wy-hazard-thin"></div>
+            <div class="wy-footer-line">
+              <span class="wy-dim">CORP REF</span> WY-MAIL-77
+              <span class="wy-sep">·</span>
+              <span class="wy-dim">PRIORITY ONE</span>
+              <span class="wy-sep">·</span>
+              <span class="wy-bright">DELIVERY CONFIRMED</span>
+            </div>
+          </div>
+          <div class="mailtrek-lcars-footer" aria-hidden="true">
+            <div class="mt-row mt-row-footer">
+              <div class="mt-cap mt-cap-left"></div>
+              <div class="mt-chip mt-chip-orange">SUMMARY</div>
+              <div class="mt-bar mt-bar-blue mt-bar-grow"></div>
+              <div class="mt-chip mt-chip-peach">STARFLEET</div>
+              <div class="mt-status mt-status-ready">READY</div>
+              <div class="mt-elbow mt-elbow-bl"></div>
+            </div>
           </div>
           <img
             class="mailcraft-footer"
@@ -229,6 +386,6 @@
     </main>
   </div>
   <script src="/static/js/markdown.js?v=1"></script>
-  <script src="/static/js/app.js?v=26"></script>
+  <script src="/static/js/app.js?v=43"></script>
 </body>
 </html>

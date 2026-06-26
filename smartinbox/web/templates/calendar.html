@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SmartInbox — Calendar</title>
+  <link rel="stylesheet" href="/static/css/styles.css?v=16">
+</head>
+<body>
+  <div class="set-app calendar-app">
+    <div class="set-layout">
+      <div class="set-main">
+        <header class="header">
+          <h1>SmartInbox</h1>
+          <p class="subtitle">Calendar — key dates from your mail</p>
+          <nav class="site-nav" aria-label="Site">
+            <a href="/">Inbox</a>
+            <a href="/search">Search</a>
+            <a href="/settings">Settings</a>
+            <a href="/llm">LLM</a>
+            <a href="/phrases">Phrases</a>
+            <a href="/senders">Senders</a>
+            <a href="/calendar" aria-current="page">Calendar</a>
+            <a href="/process">Process</a>
+            <a href="/storage">Storage</a>
+          </nav>
+        </header>
+
+        <section class="set-panel">
+          <div class="calendar-week-header">
+            <div>
+              <p class="set-hint">
+                <strong>Check for Events</strong> scans mail already stored locally for the lookback window and
+                extracts dates with Ollama. Use <a href="/process">Process</a> to import new mail from your inboxes.
+                Parallel extractions are set in <a href="/settings">Settings</a>. Downvoted events are hidden from calendar views.
+              </p>
+              <p class="calendar-inboxes" id="calendar-inboxes"></p>
+            </div>
+            <div class="calendar-actions">
+              <button type="button" class="btn btn-primary" id="btn-process-calendar">Check for Events</button>
+              <button type="button" class="btn btn-secondary" id="btn-refresh-calendar">Refresh view</button>
+            </div>
+          </div>
+          <div class="calendar-toolbar">
+            <div class="calendar-view-tabs" role="tablist" aria-label="Calendar view">
+              <button type="button" class="calendar-view-tab" data-view="month" role="tab" aria-selected="false">Month</button>
+              <button type="button" class="calendar-view-tab is-active" data-view="week" role="tab" aria-selected="true">Week</button>
+              <button type="button" class="calendar-view-tab" data-view="day" role="tab" aria-selected="false">Day</button>
+            </div>
+            <label class="calendar-days-field" title="How far back to scan stored mail and list key events">
+              <span>Go back</span>
+              <input type="text" inputmode="numeric" pattern="[0-9]*" class="set-input calendar-days-input" id="calendar-days" value="5" aria-label="Days of mail to scan" autocomplete="off" spellcheck="false">
+              <span>days</span>
+            </label>
+          </div>
+          <div class="calendar-nav">
+            <div class="calendar-period-nav">
+              <button type="button" class="btn btn-secondary btn-small" id="btn-cal-prev" aria-label="Previous period">‹</button>
+              <button type="button" class="btn btn-secondary btn-small" id="btn-cal-today">Today</button>
+              <h2 class="calendar-period-title" id="period-title">Loading…</h2>
+              <button type="button" class="btn btn-secondary btn-small" id="btn-cal-next" aria-label="Next period">›</button>
+            </div>
+          </div>
+          <p class="calendar-status" id="calendar-status"></p>
+          <div class="calendar-view-host" id="calendar-view-host">
+            <p class="calendar-empty">Loading…</p>
+          </div>
+        </section>
+
+        <section class="set-panel">
+          <h2 id="events-list-title">Key events</h2>
+          <p class="set-hint">Vote ▲ to keep highlighted, ▼ to hide from calendar views.</p>
+          <div class="calendar-event-list" id="calendar-event-list">
+            <p class="calendar-empty">Loading…</p>
+          </div>
+        </section>
+      </div>
+
+      <div class="set-activity-shell set-activity-shell--full" id="set-activity-shell" data-activity-scope="calendar">
+        <div
+          class="set-activity-resizer set-activity-resizer--width"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize activity log width"
+          tabindex="0"
+          title="Drag to resize width · double-click to reset"
+        ></div>
+        <aside class="set-activity-panel panel activity-log-panel">
+          <div class="panel-head">
+            <h2>Activity Log</h2>
+            <button type="button" class="btn btn-secondary btn-small" id="btn-clear-calendar-activity-log">Clear</button>
+          </div>
+          <div class="log-scroll" id="calendar-activity-log"></div>
+          <div
+            class="set-activity-resizer set-activity-resizer--height"
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Resize activity log height"
+            tabindex="0"
+            title="Drag to resize height · double-click to reset"
+          ></div>
+          <div
+            class="set-activity-resizer set-activity-resizer--corner"
+            role="separator"
+            aria-label="Resize activity log width and height"
+            tabindex="0"
+            title="Drag corner to resize width and height · double-click to reset"
+          ></div>
+        </aside>
+      </div>
+    </div>
+  </div>
+  <script src="/static/js/activity-log-resize.js?v=4"></script>
+  <script src="/static/js/calendar.js?v=10"></script>
+</body>
+</html>

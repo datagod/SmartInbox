@@ -6,6 +6,8 @@
   const btnDisconnect = document.getElementById('btn-disconnect');
   const pollInterval = document.getElementById('poll-interval');
   const alertCooldown = document.getElementById('alert-cooldown');
+  const calendarExtractConcurrency = document.getElementById('calendar-extract-concurrency');
+  const calendarOllamaGpu = document.getElementById('calendar-ollama-gpu');
   const alertsEnabled = document.getElementById('alerts-enabled');
   const voiceSelect = document.getElementById('voice-select');
   const ttsModel = document.getElementById('tts-model');
@@ -237,6 +239,13 @@
 
     pollInterval.value = String(settings.poll_interval || 60);
     alertCooldown.value = String(settings.alert_cooldown || 120);
+    if (calendarExtractConcurrency) {
+      calendarExtractConcurrency.value = String(settings.calendar_extract_concurrency || 6);
+    }
+    if (calendarOllamaGpu) {
+      const gpu = settings.calendar_ollama_main_gpu;
+      calendarOllamaGpu.value = gpu == null || gpu < 0 ? '' : String(gpu);
+    }
     alertsEnabled.value = settings.alerts_enabled ? '1' : '0';
     if (importantAlertMode) {
       importantAlertMode.value = settings.important_alert_mode || 'always';
@@ -404,6 +413,43 @@
       }),
     });
     gmailStatus.textContent = 'Important sender alert rules saved.';
+  });
+
+  document.getElementById('btn-save-calendar-settings')?.addEventListener('click', async () => {
+    const concurrency = Number(calendarExtractConcurrency?.value || 6);
+    const gpuRaw = calendarOllamaGpu?.value?.trim();
+    const gpuPayload = gpuRaw === '' || gpuRaw == null ? 'auto' : Number(gpuRaw);
+    try {
+      const res = await fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          calendar_extract_concurrency: concurrency,
+          calendar_ollama_main_gpu: gpuPayload,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        gmailStatus.textContent = data.error || 'Failed to save calendar settings';
+        gmailStatus.className = 'gmail-status error';
+        return;
+      }
+      if (calendarExtractConcurrency) {
+        calendarExtractConcurrency.value = String(data.calendar_extract_concurrency || concurrency);
+      }
+      if (calendarOllamaGpu) {
+        const gpu = data.calendar_ollama_main_gpu;
+        calendarOllamaGpu.value = gpu == null || gpu < 0 ? '' : String(gpu);
+      }
+      const gpuLabel =
+        data.calendar_ollama_main_gpu == null ? 'auto GPU' : `GPU ${data.calendar_ollama_main_gpu}`;
+      gmailStatus.textContent =
+        `Calendar settings saved (${data.calendar_extract_concurrency} parallel, ${gpuLabel}).`;
+      gmailStatus.className = 'gmail-status';
+    } catch (e) {
+      gmailStatus.textContent = `Failed to save calendar settings: ${e}`;
+      gmailStatus.className = 'gmail-status error';
+    }
   });
 
   document.getElementById('btn-save-timing').addEventListener('click', async () => {

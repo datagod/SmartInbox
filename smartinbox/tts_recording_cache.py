@@ -9,6 +9,7 @@ from typing import Any
 
 from smartinbox.chatterbox_models import normalize_tts_model
 from smartinbox.delivery_modes import normalize_delivery_mode
+from smartinbox.important_senders import sanitize_text_for_tts, sender_name_for_tts
 
 _MAX_BASENAME_LEN = 120
 _RECORDING_EXTENSIONS = {".wav", ".mp3", ".opus"}
@@ -192,12 +193,12 @@ def format_email_alert_message(
     *,
     template: str = "New email from {sender}. {subject}",
 ) -> str:
-    snd = (sender or "unknown sender").strip()
-    sub = (subject or "no subject").strip()
+    snd = sender_name_for_tts(sender)
+    sub = sanitize_text_for_tts(subject) or "no subject"
     try:
-        return template.format(sender=snd, subject=sub).strip()
+        return sanitize_text_for_tts(template.format(sender=snd, subject=sub))
     except (KeyError, ValueError):
-        return f"New email from {snd}. {sub}"
+        return sanitize_text_for_tts(f"New email from {snd}. {sub}")
 
 
 def prepend_sender_announcement(
@@ -208,13 +209,13 @@ def prepend_sender_announcement(
 ) -> str:
     """Prepend who the email is from before a voice-summary announcement."""
     base = (text or "").strip()
-    snd = (sender or "unknown sender").strip()
+    snd = sender_name_for_tts(sender)
     prefix = f"New email from {snd}."
     if important:
         prefix = f"Important. {prefix}"
     if not base:
-        return prefix
-    return f"{prefix} {base}"
+        return sanitize_text_for_tts(prefix)
+    return sanitize_text_for_tts(f"{prefix} {base}")
 
 
 def save_recording(text: str, audio: bytes, *, settings: dict[str, Any]) -> str:

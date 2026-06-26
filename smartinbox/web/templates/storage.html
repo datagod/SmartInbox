@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SmartInbox — Storage</title>
+  <link rel="stylesheet" href="/static/css/styles.css?v=11">
+</head>
+<body>
+  <div class="set-app storage-app">
+    <header class="header">
+      <h1>SmartInbox</h1>
+      <p class="subtitle">Storage — local mail database</p>
+      <nav class="site-nav" aria-label="Site">
+        <a href="/">Inbox</a>
+        <a href="/search">Search</a>
+        <a href="/settings">Settings</a>
+        <a href="/llm">LLM</a>
+        <a href="/phrases">Phrases</a>
+        <a href="/senders">Senders</a>
+        <a href="/calendar">Calendar</a>
+        <a href="/process">Process</a>
+        <a href="/storage" aria-current="page">Storage</a>
+      </nav>
+    </header>
+
+    <p class="storage-status" id="storage-status"></p>
+
+    <section class="set-panel">
+      <div class="storage-panel-head">
+        <h2>Overview</h2>
+        <button type="button" class="btn btn-secondary btn-small" id="btn-refresh-storage">Refresh</button>
+      </div>
+      <div class="storage-stat-grid" id="storage-overview">
+        <p class="storage-empty">Loading…</p>
+      </div>
+    </section>
+
+    <section class="set-panel">
+      <h2>By source</h2>
+      <p class="set-hint">Stored emails grouped by mail provider and connected account.</p>
+      <div class="storage-table-wrap">
+        <table class="storage-table" id="storage-by-source">
+          <thead>
+            <tr>
+              <th>Provider</th>
+              <th>Account</th>
+              <th class="col-num">Emails</th>
+              <th class="col-num">Share</th>
+            </tr>
+          </thead>
+          <tbody id="storage-source-tbody">
+            <tr><td colspan="4" class="storage-empty">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="set-panel storage-split-panels">
+      <div class="storage-split-col">
+        <h2>Date range</h2>
+        <p class="set-hint">When mail was received vs when it was stored locally.</p>
+        <dl class="storage-dl" id="storage-dates"></dl>
+      </div>
+      <div class="storage-split-col">
+        <h2>Recent activity</h2>
+        <p class="set-hint">How many stored emails fall in each window (by received date).</p>
+        <dl class="storage-dl" id="storage-age-buckets"></dl>
+      </div>
+    </section>
+
+    <section class="set-panel storage-split-panels">
+      <div class="storage-split-col">
+        <h2>Storage space</h2>
+        <p class="set-hint">SQLite database size on disk and approximate text content stored per email.</p>
+        <dl class="storage-dl" id="storage-space"></dl>
+      </div>
+      <div class="storage-split-col">
+        <h2>Processing</h2>
+        <p class="set-hint">Summaries, alerts, and calendar extraction status.</p>
+        <dl class="storage-dl" id="storage-processing"></dl>
+      </div>
+    </section>
+
+    <section class="set-panel">
+      <h2>By month</h2>
+      <p class="set-hint">Email count by received month (most recent first).</p>
+      <div class="storage-table-wrap">
+        <table class="storage-table" id="storage-by-month">
+          <thead>
+            <tr>
+              <th>Month</th>
+              <th class="col-num">Emails</th>
+              <th class="col-bar">Volume</th>
+            </tr>
+          </thead>
+          <tbody id="storage-month-tbody">
+            <tr><td colspan="3" class="storage-empty">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="set-panel">
+      <h2>Most recent emails</h2>
+      <p class="set-hint">Latest messages in the local database (approximate stored size).</p>
+      <div class="storage-table-wrap">
+        <table class="storage-table storage-table--recent" id="storage-recent">
+          <thead>
+            <tr>
+              <th>Received</th>
+              <th>Source</th>
+              <th>Subject</th>
+              <th class="col-num">Size</th>
+            </tr>
+          </thead>
+          <tbody id="storage-recent-tbody">
+            <tr><td colspan="4" class="storage-empty">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="storage-db-path" id="storage-db-path"></p>
+    </section>
+  </div>
+  <script src="/static/js/storage.js?v=1"></script>
+</body>
+</html>

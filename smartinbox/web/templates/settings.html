@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SmartInbox — Settings</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=11">
+  <link rel="stylesheet" href="/static/css/styles.css?v=13">
 </head>
 <body>
   <div class="set-app">
@@ -15,10 +15,14 @@
       <p class="subtitle">Settings</p>
       <nav class="site-nav" aria-label="Site">
         <a href="/">Inbox</a>
+        <a href="/search">Search</a>
         <a href="/settings" aria-current="page">Settings</a>
         <a href="/llm">LLM</a>
         <a href="/phrases">Phrases</a>
         <a href="/senders">Senders</a>
+        <a href="/calendar">Calendar</a>
+        <a href="/process">Process</a>
+        <a href="/storage">Storage</a>
       </nav>
     </header>
 
@@ -222,6 +226,33 @@
     </section>
 
     <section class="set-panel">
+      <h2>Calendar extraction</h2>
+      <div class="set-grid">
+        <label class="set-field">
+          <span>Concurrent event extractions</span>
+          <input type="number" class="set-input" id="calendar-extract-concurrency" min="1" max="32" step="1" value="6">
+        </label>
+        <label class="set-field">
+          <span>Ollama GPU (calendar only)</span>
+          <input type="number" class="set-input" id="calendar-ollama-gpu" min="0" max="15" step="1" value="0" placeholder="auto">
+        </label>
+      </div>
+      <p class="set-hint">
+        How many emails Ollama processes in parallel during <strong>Check for Events</strong> on the
+        Calendar tab. Higher values use more GPU/CPU and VRAM. With dual GPUs, try <strong>6–8</strong>;
+        reduce if you see timeouts or out-of-memory errors.
+      </p>
+      <p class="set-hint">
+        <strong>Ollama GPU</strong> pins calendar extraction to a GPU index via Ollama's
+        <code>main_gpu</code> option (inbox summaries are unchanged). Use <strong>0</strong> for GPU 0;
+        clear the field for Ollama's automatic scheduling. The model is preloaded on that GPU before each scan.
+      </p>
+      <div class="actions-row">
+        <button type="button" class="btn btn-primary" id="btn-save-calendar-settings">Save</button>
+      </div>
+    </section>
+
+    <section class="set-panel">
       <h2>Ollama</h2>
       <p class="set-hint">
         Choose the summarization model and edit the system prompt on the
@@ -230,15 +261,34 @@
     </section>
     </div>
 
+    <div
+      class="set-activity-resizer"
+      id="set-activity-resizer"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize activity log"
+      tabindex="0"
+      title="Drag to resize width · double-click to reset"
+    ></div>
+
     <aside class="set-activity-panel panel activity-log-panel">
       <div class="panel-head">
         <h2>Activity Log</h2>
         <button type="button" class="btn btn-secondary btn-small" id="btn-clear-settings-activity-log">Clear</button>
       </div>
       <div class="log-scroll" id="settings-activity-log"></div>
+      <div
+        class="set-activity-height-resizer"
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="Resize activity log height"
+        tabindex="0"
+        title="Drag to resize height · double-click to reset"
+      ></div>
     </aside>
     </div>
   </div>
+  <script src="/static/js/activity-log-resize.js?v=3"></script>
   <script src="/static/js/settings.js?v=15"></script>
 </body>
 </html>

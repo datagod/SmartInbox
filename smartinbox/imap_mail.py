@@ -9,9 +9,25 @@ import imaplib
 import re
 import sqlite3
 import time
+from datetime import datetime, timedelta, timezone
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
 from typing import Any
+
+_IMAP_MONTHS = (
+    "Jan",
+    "Feb",
+    "Mar",
+    "Apr",
+    "May",
+    "Jun",
+    "Jul",
+    "Aug",
+    "Sep",
+    "Oct",
+    "Nov",
+    "Dec",
+)
 
 IMAP_TIMEOUT_SECONDS = 30.0
 
@@ -93,13 +109,55 @@ def format_imap_error(exc: Exception, *, provider: str = "gmail") -> str:
     return text or str(exc)
 
 
+_UNKNOWN_CHARSETS = frozenset(
+    {
+        "unknown-8bit",
+        "unknown",
+        "x-unknown",
+        "default",
+        "8bit",
+        "7bit",
+        "binary",
+    }
+)
+
+
+def _normalize_charset(charset: str | None) -> str | None:
+    text = (charset or "").strip()
+    if not text:
+        return None
+    lowered = text.lower().replace("_", "-")
+    if lowered in _UNKNOWN_CHARSETS or lowered.startswith("unknown"):
+        return None
+    return text
+
+
+def _decode_bytes(payload: bytes, charset: str | None = None) -> str:
+    candidates: list[str] = []
+    normalized = _normalize_charset(charset)
+    if normalized:
+        candidates.append(normalized)
+    candidates.extend(["utf-8", "latin-1"])
+    seen: set[str] = set()
+    for encoding in candidates:
+        key = encoding.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            return payload.decode(encoding, errors="replace")
+        except (LookupError, UnicodeError, ValueError):
+            continue
+    return payload.decode("latin-1", errors="replace")
+
+
 def decode_mime_header(value: str | None) -> str:
     if not value:
         return ""
     parts: list[str] = []
     for chunk, charset in decode_header(value):
         if isinstance(chunk, bytes):
-            parts.append(chunk.decode(charset or "utf-8", errors="replace"))
+            parts.append(_decode_bytes(chunk, charset))
         else:
             parts.append(str(chunk))
     return "".join(parts).strip()
@@ -117,6 +175,146 @@ def _strip_html(html_doc: str) -> str:
     return text.strip()
 
 
+_ICS_KNOWN_FILENAMES = frozenset(
+    {
+        "invite.ics",
+        "calendar.ics",
+        "event.ics",
+        "meeting.ics",
+        "invitation.ics",
+        "appointment.ics",
+    }
+)
+_ICS_BLOCK_RE = re.compile(r"BEGIN:VCALENDAR[\s\S]*?END:VCALENDAR", re.IGNORECASE)
+
+
+def _part_attachment_name(part: email.message.Message) -> str:
+    name = decode_mime_header(part.get_filename() or "")
+    if not name:
+        try:
+            name = decode_mime_header(part.get_param("name") or "")
+        except Exception:
+            name = ""
+    if not name:
+        disp = str(part.get("Content-Disposition") or "")
+        rfc2231 = re.search(
+            r"filename\*=(?:[^']*'[^']*'|UTF-8''|utf-8'')([^;\n]+)",
+            disp,
+            re.I,
+        )
+        if rfc2231:
+            name = decode_mime_header(rfc2231.group(1))
+        if not name:
+            match = re.search(r'filename="?([^";\n]+)"?', disp, re.I)
+            if match:
+                name = decode_mime_header(match.group(1))
+    return name.strip().lower()
+
+
+def _part_payload_bytes(part: email.message.Message) -> bytes | None:
+    try:
+        payload = part.get_payload(decode=True)
+    except Exception:
+        payload = None
+    if isinstance(payload, bytes) and payload:
+        return payload
+    if isinstance(payload, str):
+        return payload.encode("utf-8", errors="replace")
+    raw = part.get_payload()
+    if isinstance(raw, bytes) and raw:
+        return raw
+    if isinstance(raw, str):
+        return raw.encode("latin-1", errors="replace")
+    return None
+
+
+def _decode_part_text(part: email.message.Message) -> str:
+    payload = _part_payload_bytes(part)
+    if not payload:
+        return ""
+    return _decode_bytes(payload, part.get_content_charset()).strip()
+
+
+def _looks_like_ics_attachment(filename: str, ctype: str) -> bool:
+    name = (filename or "").strip().lower()
+    if name in _ICS_KNOWN_FILENAMES or name.endswith(".ics"):
+        return True
+    if ctype in (
+        "text/calendar",
+        "application/ics",
+        "application/calendar",
+        "application/x-ical",
+        "application/vnd.apple.ics",
+    ):
+        return True
+    if ctype == "application/octet-stream" and (
+        name.endswith(".ics") or "calendar" in name or "invite" in name
+    ):
+        return True
+    return False
+
+
+def _iter_mime_parts(msg: email.message.Message):
+    """Depth-first walk including nested message/rfc822 forwards."""
+    stack: list[email.message.Message] = [msg]
+    while stack:
+        current = stack.pop()
+        yield current
+        if current.is_multipart():
+            for sub in reversed(current.get_payload()):
+                if isinstance(sub, email.message.Message):
+                    stack.append(sub)
+            continue
+        ctype = (current.get_content_type() or "").lower()
+        if ctype == "message/rfc822":
+            payload = current.get_payload()
+            if isinstance(payload, email.message.Message):
+                stack.append(payload)
+            elif isinstance(payload, list):
+                for sub in reversed(payload):
+                    if isinstance(sub, email.message.Message):
+                        stack.append(sub)
+
+
+def _store_ics_text(text: str, *, chunks: list[str], seen: set[str]) -> None:
+    if not text or "BEGIN:VCALENDAR" not in text.upper():
+        return
+    for block in _ICS_BLOCK_RE.findall(text):
+        block = block.strip()
+        if not block:
+            continue
+        digest = hashlib.sha256(block.encode("utf-8", errors="replace")).hexdigest()[:16]
+        if digest in seen:
+            continue
+        seen.add(digest)
+        chunks.append(block)
+
+
+def _extract_calendar_ics(msg: email.message.Message) -> str:
+    """Collect ICS from attachments, calendar parts, and nested forwarded messages."""
+    chunks: list[str] = []
+    seen: set[str] = set()
+
+    for part in _iter_mime_parts(msg):
+        ctype = (part.get_content_type() or "").lower()
+        filename = _part_attachment_name(part)
+        text = _decode_part_text(part)
+
+        if _looks_like_ics_attachment(filename, ctype):
+            _store_ics_text(text, chunks=chunks, seen=seen)
+            continue
+
+        if ctype in ("text/plain", "text/html") and text:
+            if "BEGIN:VCALENDAR" in text.upper():
+                plain = text if ctype == "text/plain" else _strip_html(text)
+                _store_ics_text(plain, chunks=chunks, seen=seen)
+
+        if text and "BEGIN:VCALENDAR" in text.upper() and ctype.startswith(("application/", "text/")):
+            _store_ics_text(text, chunks=chunks, seen=seen)
+
+    return "\n\n".join(chunks)[:200000]
+
+
 def _extract_body(msg: email.message.Message) -> str:
     plain = ""
     html = ""
@@ -126,30 +324,20 @@ def _extract_body(msg: email.message.Message) -> str:
             disp = str(part.get("Content-Disposition") or "")
             if "attachment" in disp.lower():
                 continue
-            try:
-                payload = part.get_payload(decode=True)
-            except Exception:
+            text = _decode_part_text(part)
+            if not text:
                 continue
-            if not payload:
-                continue
-            charset = part.get_content_charset() or "utf-8"
-            text = payload.decode(charset, errors="replace")
             if ctype == "text/plain" and not plain:
                 plain = text
             elif ctype == "text/html" and not html:
                 html = text
     else:
-        try:
-            payload = msg.get_payload(decode=True)
-            if payload:
-                charset = msg.get_content_charset() or "utf-8"
-                text = payload.decode(charset, errors="replace")
-                if msg.get_content_type() == "text/html":
-                    html = text
-                else:
-                    plain = text
-        except Exception:
-            pass
+        text = _decode_part_text(msg)
+        if text:
+            if msg.get_content_type() == "text/html":
+                html = text
+            else:
+                plain = text
     return (plain or _strip_html(html) or "").strip()
 
 
@@ -170,6 +358,7 @@ def parse_imap_message(
     sender = decode_mime_header(msg.get("From"))
     subject = decode_mime_header(msg.get("Subject")) or "(no subject)"
     body = _extract_body(msg)
+    calendar_ics = _extract_calendar_ics(msg)
     snippet = re.sub(r"\s+", " ", body[:240]).strip()
     date_hdr = msg.get("Date")
     received_at = 0.0
@@ -190,6 +379,7 @@ def parse_imap_message(
         "subject": subject,
         "snippet": snippet,
         "body_text": body[:50000],
+        "calendar_ics": calendar_ics or None,
         "received_at": received_at,
     }
 
@@ -279,6 +469,82 @@ def fetch_unread_imap(
                         provider=provider,
                     )
                 )
+    except imaplib.IMAP4.error as e:
+        raise RuntimeError(format_imap_error(e, provider=provider)) from e
+    finally:
+        try:
+            mail.logout()
+        except Exception:
+            pass
+    return messages
+
+
+def _imap_since_date(days: int) -> str:
+    """IMAP SINCE criterion: DD-Mon-YYYY with English month abbreviations."""
+    days = max(1, int(days))
+    dt = datetime.now(timezone.utc) - timedelta(days=days)
+    return f"{dt.day:02d}-{_IMAP_MONTHS[dt.month - 1]}-{dt.year}"
+
+
+def fetch_messages_since_imap(
+    email_addr: str,
+    password: str,
+    *,
+    imap_host: str,
+    imap_port: int,
+    use_ssl: bool = True,
+    use_starttls: bool = False,
+    provider: str = "gmail",
+    account_id: str,
+    since_days: int = 5,
+    since_seconds: int | None = None,
+    max_results: int = 500,
+) -> list[dict[str, Any]]:
+    """Fetch inbox messages in a lookback window (not limited to UNSEEN)."""
+    pwd = normalize_password(password)
+    if since_seconds is not None:
+        since_seconds = max(3600, min(int(since_seconds), 365 * 86400))
+        since_ts = time.time() - since_seconds
+        imap_days = max(1, (since_seconds + 86399) // 86400)
+    else:
+        since_days = max(1, int(since_days))
+        since_ts = time.time() - since_days * 86400
+        imap_days = since_days
+    since_str = _imap_since_date(imap_days)
+    mail = _imap_connect(
+        imap_host, imap_port, use_ssl=use_ssl, use_starttls=use_starttls
+    )
+    messages: list[dict[str, Any]] = []
+    try:
+        mail.login(email_addr.strip(), pwd)
+        mail.select("INBOX", readonly=True)
+        _status, data = mail.search(None, f"(SINCE {since_str})")
+        if not data or not data[0]:
+            return []
+        uids = data[0].split()
+        if max_results > 0 and len(uids) > max_results:
+            uids = uids[-max_results:]
+        for uid in uids:
+            _status, fetched = mail.fetch(uid, "(RFC822)")
+            if not fetched:
+                continue
+            for item in fetched:
+                if not isinstance(item, tuple) or len(item) < 2:
+                    continue
+                raw = item[1]
+                if not isinstance(raw, (bytes, bytearray)):
+                    continue
+                parsed = parse_imap_message(
+                    bytes(raw),
+                    uid,
+                    account_id=account_id,
+                    account_email=email_addr.strip(),
+                    provider=provider,
+                )
+                received = float(parsed.get("received_at") or 0)
+                if received > 0 and received < since_ts:
+                    continue
+                messages.append(parsed)
     except imaplib.IMAP4.error as e:
         raise RuntimeError(format_imap_error(e, provider=provider)) from e
     finally:
@@ -590,6 +856,29 @@ def fetch_unread_for_account_record(
         use_starttls=preset_use_starttls(acct["provider"], use_ssl=use_ssl),
         provider=acct["provider"],
         account_id=acct["id"],
+        max_results=max_results,
+    )
+
+
+def fetch_messages_since_for_account_record(
+    acct: dict[str, Any],
+    *,
+    since_days: int = 5,
+    since_seconds: int | None = None,
+    max_results: int = 500,
+) -> list[dict[str, Any]]:
+    use_ssl = bool(acct["use_ssl"])
+    return fetch_messages_since_imap(
+        acct["email"],
+        acct["password"],
+        imap_host=acct["imap_host"],
+        imap_port=int(acct["imap_port"]),
+        use_ssl=use_ssl,
+        use_starttls=preset_use_starttls(acct["provider"], use_ssl=use_ssl),
+        provider=acct["provider"],
+        account_id=acct["id"],
+        since_days=since_days,
+        since_seconds=since_seconds,
         max_results=max_results,
     )
 

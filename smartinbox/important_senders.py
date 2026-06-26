@@ -32,6 +32,56 @@ def display_sender(sender: str | None) -> str:
     return text or normalize_sender(text)
 
 
+_RE_SENDER_WITH_ADDR = re.compile(
+    r'^(?:"([^"]+)"|([^<"]+?))\s*<[^>]+>\s*$'
+)
+_RE_ADDR_ONLY = re.compile(r"^<([^>]+)>$")
+_RE_NAMED_ADDR = re.compile(
+    r'(?:"([^"]+)"|([^<"\s][^<]*?))\s*<[^@\s>]+@[^>]+>',
+    re.IGNORECASE,
+)
+_RE_ANGLE_ADDR = re.compile(r"<[^@\s>]+@[^>]+>", re.IGNORECASE)
+_RE_BARE_EMAIL = re.compile(
+    r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
+    re.IGNORECASE,
+)
+
+
+def sender_name_for_tts(sender: str | None) -> str:
+    """Return a speakable sender label without reading raw email addresses."""
+    text = (sender or "").strip()
+    if not text:
+        return "unknown sender"
+    match = _RE_SENDER_WITH_ADDR.match(text)
+    if match:
+        name = (match.group(1) or match.group(2) or "").strip()
+        if name:
+            return name
+    if _RE_ADDR_ONLY.match(text) or (
+        "@" in text and "<" not in text and ">" not in text
+    ):
+        return "unknown sender"
+    return text
+
+
+def sanitize_text_for_tts(text: str | None) -> str:
+    """Remove email addresses from text destined for speech synthesis."""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return ""
+
+    def _named_replace(match: re.Match[str]) -> str:
+        return (match.group(1) or match.group(2) or "").strip()
+
+    cleaned = _RE_NAMED_ADDR.sub(_named_replace, cleaned)
+    cleaned = _RE_ANGLE_ADDR.sub("", cleaned)
+    cleaned = _RE_BARE_EMAIL.sub("", cleaned)
+    cleaned = re.sub(r"\(\s*\)", "", cleaned)
+    cleaned = re.sub(r"\s{2,}", " ", cleaned)
+    cleaned = re.sub(r"\s+([,.;!?])", r"\1", cleaned)
+    return cleaned.strip()
+
+
 def normalize_important_alert_mode(value: Any) -> str:
     mode = str(value or DEFAULT_IMPORTANT_ALERT_MODE).strip().lower()
     return mode if mode in IMPORTANT_ALERT_MODES else DEFAULT_IMPORTANT_ALERT_MODE

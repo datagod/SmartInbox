@@ -58,10 +58,12 @@ def init_db(conn: sqlite3.Connection) -> None:
     conn.commit()
     _ensure_email_account_columns(conn)
     from smartinbox.imap_mail import init_imap_accounts_table
+    from smartinbox.calendar_events import init_calendar_tables
     from smartinbox.sender_interest import init_sender_interest_table
 
     init_imap_accounts_table(conn)
     init_sender_interest_table(conn)
+    init_calendar_tables(conn)
 
 
 def _ensure_email_account_columns(conn: sqlite3.Connection) -> None:
@@ -71,6 +73,7 @@ def _ensure_email_account_columns(conn: sqlite3.Connection) -> None:
         ("account_email", "ALTER TABLE emails ADD COLUMN account_email TEXT"),
         ("provider", "ALTER TABLE emails ADD COLUMN provider TEXT"),
         ("starred", "ALTER TABLE emails ADD COLUMN starred INTEGER NOT NULL DEFAULT 0"),
+        ("calendar_ics", "ALTER TABLE emails ADD COLUMN calendar_ics TEXT"),
     ):
         if name not in cols:
             conn.execute(ddl)
@@ -96,17 +99,36 @@ def set_setting(conn: sqlite3.Connection, key: str, value: Any) -> None:
     conn.commit()
 
 
-def upsert_email(conn: sqlite3.Connection, email: dict[str, Any]) -> bool:
-    existing = conn.execute("SELECT id FROM emails WHERE id = ?", (email["id"],)).fetchone()
+def _normalize_calendar_ics(value: Any) -> str | None:
+    text = str(value or "").strip()
+    return text if text else None
+
+
+def upsert_email(conn: sqlite3.Connection, email: dict[str, Any]) -> str:
+    """Insert or touch an email. Returns 'new', 'ics_updated', or 'existing'."""
+    ics = _normalize_calendar_ics(email.get("calendar_ics"))
+    existing = conn.execute(
+        "SELECT calendar_ics FROM emails WHERE id = ?",
+        (email["id"],),
+    ).fetchone()
     if existing is not None:
-        return False
+        if ics:
+            old_ics = _normalize_calendar_ics(existing["calendar_ics"])
+            if old_ics != ics:
+                conn.execute(
+                    "UPDATE emails SET calendar_ics = ? WHERE id = ?",
+                    (ics, email["id"]),
+                )
+                conn.commit()
+                return "ics_updated"
+        return "existing"
     conn.execute(
         """
         INSERT INTO emails (
             id, thread_id, account_id, account_email, provider,
-            sender, subject, snippet, body_text,
+            sender, subject, snippet, body_text, calendar_ics,
             received_at, summary_short, summary_detailed, alerted_at, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             email["id"],
@@ -118,6 +140,7 @@ def upsert_email(conn: sqlite3.Connection, email: dict[str, Any]) -> bool:
             email.get("subject"),
             email.get("snippet"),
             email.get("body_text"),
+            ics,
             email.get("received_at"),
             email.get("summary_short"),
             email.get("summary_detailed"),
@@ -126,7 +149,7 @@ def upsert_email(conn: sqlite3.Connection, email: dict[str, Any]) -> bool:
         ),
     )
     conn.commit()
-    return True
+    return "new"
 
 
 def update_email_summary(

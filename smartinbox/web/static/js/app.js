@@ -13,6 +13,7 @@
   const summaryViewOptions = document.querySelectorAll('.summary-view-option');
 
   const THEME_KEY = 'smartinbox.summaryTheme';
+  const INBOX_HIDDEN_KEY = 'smartinbox-inbox-hidden';
   const THEMES = [
     'modern',
     'ansi',
@@ -28,6 +29,12 @@
     'mainframe',
     'pdp11',
     'mailcraft',
+    'mailtrek',
+    'weylandyutani',
+    'reddwarf',
+    'empire',
+    'kawaiimail',
+    'nasa70s',
     'pacmail',
     'lsmail',
     'c64',
@@ -36,6 +43,7 @@
 
   let emails = [];
   let demoMode = false;
+  let hiddenInboxIds = new Set();
   let selectedId = null;
   let summaryViewMode = 'summary';
   let importantKeys = new Set();
@@ -119,7 +127,7 @@
   function buildLogElement(entry) {
     const div = document.createElement('div');
     const lvl = (entry.level || 'info').replace('warning', 'warn');
-    const isInboxCheck = String(entry.message || '').startsWith('Inbox check —');
+    const isInboxCheck = String(entry.message || '').startsWith('Inbox check');
     div.className = isInboxCheck ? 'activity-entry activity-entry--success' : 'activity-entry';
     const tsClass = isInboxCheck ? 'success' : lvl;
     div.innerHTML = `<span class="lvl-${tsClass}">[${entry.ts}]</span> ${escapeHtml(entry.message)}`;
@@ -231,8 +239,145 @@
     return 0;
   }
 
-  function sortEmailsDesc(list) {
-    return [...(list || [])].sort((a, b) => emailSortKey(b) - emailSortKey(a));
+  function emailVoteTier(email) {
+    const vote = senderLastVote(email?.sender);
+    return vote === 'down' ? 1 : 0;
+  }
+
+  function sortEmailsForInbox(list) {
+    return [...(list || [])].sort((a, b) => {
+      const tierA = emailVoteTier(a);
+      const tierB = emailVoteTier(b);
+      if (tierA !== tierB) return tierA - tierB;
+      return emailSortKey(b) - emailSortKey(a);
+    });
+  }
+
+  function buildOriginalEmailHtml(row) {
+    const from = row.sender || '(unknown)';
+    const subject = row.subject || '(no subject)';
+    const date = fmtTime(row.received_at);
+    const snippetOnly = !row.body_text && !!row.snippet;
+    const bodyHtml = formatOriginalEmailBody(row.body_text || row.snippet || '');
+    return (
+      '<div class="original-email-meta">' +
+      `<p><span class="original-label">From</span> ${escapeHtml(from)}</p>` +
+      `<p><span class="original-label">Subject</span> ${escapeHtml(subject)}</p>` +
+      `<p><span class="original-label">Date</span> ${escapeHtml(date)}</p>` +
+      '</div>' +
+      (snippetOnly
+        ? '<p class="original-email-note">Showing snippet only — full message body is not stored.</p>'
+        : '') +
+      `<div class="original-email-body">${bodyHtml}</div>`
+    );
+  }
+
+  function loadHiddenInbox() {
+    hiddenInboxIds = new Set();
+    try {
+      const raw = localStorage.getItem(INBOX_HIDDEN_KEY);
+      if (!raw) return;
+      const ids = JSON.parse(raw);
+      if (Array.isArray(ids)) {
+        hiddenInboxIds = new Set(ids.map(String));
+      }
+    } catch (_) { /* ignore */ }
+  }
+
+  function saveHiddenInbox() {
+    try {
+      localStorage.setItem(INBOX_HIDDEN_KEY, JSON.stringify([...hiddenInboxIds]));
+    } catch (_) { /* ignore */ }
+  }
+
+  function pruneHiddenInbox() {
+    const emailIds = new Set(emails.map((e) => String(e.id)));
+    let changed = false;
+    for (const id of hiddenInboxIds) {
+      if (!emailIds.has(id)) {
+        hiddenInboxIds.delete(id);
+        changed = true;
+      }
+    }
+    if (changed) saveHiddenInbox();
+  }
+
+  function hideInboxEmail(id) {
+    const idStr = String(id);
+    const visibleBefore = sortedInboxEmails();
+    const wasSelected = selectedId === id;
+    hiddenInboxIds.add(idStr);
+    saveHiddenInbox();
+    if (wasSelected) {
+      const index = visibleBefore.findIndex((e) => String(e.id) === idStr);
+      const remaining = visibleBefore.filter((e) => String(e.id) !== idStr);
+      const next = remaining[index] || remaining[index - 1];
+      if (next) {
+        selectEmail(next.id);
+        return;
+      }
+      selectedId = null;
+      btnResummarize.disabled = true;
+      showSummaryMessage('Select an email to view its Ollama summary.', '');
+      updateViewSwitcher();
+    }
+    renderInbox();
+  }
+
+  function hideAllInboxEmails() {
+    const visible = sortedInboxEmails();
+    if (!visible.length) return;
+    let added = 0;
+    for (const row of visible) {
+      const idStr = String(row.id);
+      if (!hiddenInboxIds.has(idStr)) {
+        hiddenInboxIds.add(idStr);
+        added += 1;
+      }
+    }
+    if (!added) return;
+    saveHiddenInbox();
+    selectedId = null;
+    btnResummarize.disabled = true;
+    showSummaryMessage('Select an email to view its Ollama summary.', '');
+    updateViewSwitcher();
+    renderInbox();
+    appendLog({
+      ts: new Date().toLocaleTimeString(),
+      level: 'info',
+      message: `Inbox — hid ${added} email${added === 1 ? '' : 's'} from view`,
+    });
+  }
+
+  function sortedInboxEmails() {
+    return sortEmailsForInbox(emails).filter((e) => !hiddenInboxIds.has(String(e.id)));
+  }
+
+  function setInboxKeyboardNav(active) {
+    document.body.classList.toggle('inbox-keyboard-nav', !!active);
+  }
+
+  function scrollSelectedInboxItemIntoView() {
+    requestAnimationFrame(() => {
+      const selected = inboxList?.querySelector('.email-item.selected');
+      selected?.scrollIntoView({ block: 'nearest' });
+      if (document.body.classList.contains('inbox-keyboard-nav') && selected) {
+        if (selected instanceof HTMLElement) selected.focus({ preventScroll: true });
+      }
+    });
+  }
+
+  function navigateInbox(delta) {
+    const sorted = sortedInboxEmails();
+    if (!sorted.length) return;
+    setInboxKeyboardNav(true);
+    let index = sorted.findIndex((e) => e.id === selectedId);
+    if (index < 0) {
+      index = delta > 0 ? -1 : sorted.length;
+    }
+    const next = index + delta;
+    if (next < 0 || next >= sorted.length) return;
+    selectEmail(sorted[next].id, { scrollInbox: true, keyboard: true });
   }
 
   function renderInbox() {
@@ -243,11 +388,20 @@
       inboxCount.textContent = demoMode ? 'DEMO · 0 sample emails' : '0 emails';
       return;
     }
-    const sorted = sortEmailsDesc(emails);
+    const total = sortEmailsForInbox(emails).length;
+    const sorted = sortedInboxEmails();
+    const hiddenCount = total - sorted.length;
     const countLabel = sorted.length === 1 ? 'email' : 'emails';
-    inboxCount.textContent = demoMode
+    let countText = demoMode
       ? `DEMO · ${sorted.length} sample ${countLabel}`
       : `${sorted.length} ${countLabel}`;
+    if (hiddenCount > 0) countText += ` (${hiddenCount} hidden)`;
+    inboxCount.textContent = countText;
+    if (!sorted.length) {
+      inboxList.innerHTML =
+        '<p class="summary-empty">All emails are hidden from this view. New mail will still appear.</p>';
+      return;
+    }
     inboxList.innerHTML = sorted
       .map((e) => {
         const sel = e.id === selectedId ? ' selected' : '';
@@ -264,7 +418,7 @@
         const lastVote = senderLastVote(e.sender);
         const upActive = lastVote === 'up' ? ' vote-active' : '';
         const downActive = lastVote === 'down' ? ' vote-active' : '';
-        return `<div class="email-item${sel}${imp}${starred ? ' starred' : ''}${junk}" data-id="${escapeHtml(e.id)}">
+        return `<div class="email-item${sel}${imp}${starred ? ' starred' : ''}${junk}" data-id="${escapeHtml(e.id)}" tabindex="-1">
           <div class="email-votes" role="group" aria-label="Rate sender">
             <button type="button" class="vote-btn vote-up${upActive}" data-vote="up" title="Interested in this sender" aria-label="Upvote sender">▲</button>
             <button type="button" class="vote-btn vote-down${downActive}" data-vote="down" title="Mark sender as junk" aria-label="Downvote sender">▼</button>
@@ -273,16 +427,20 @@
             <div class="email-subject">${badge}${prov}${escapeHtml(e.subject || '(no subject)')}</div>
             <div class="email-meta">${escapeHtml(e.sender || '')} · ${fmtTime(e.received_at)}</div>
           </div>
+          <div class="email-item-actions">
+            <button type="button" class="btn btn-secondary btn-small btn-hide-email" title="Hide from inbox">Hide</button>
+          </div>
         </div>`;
       })
       .join('');
     inboxList.querySelectorAll('.email-item').forEach((el) => {
       el.addEventListener('click', (ev) => {
-        if (ev.target.closest('.vote-btn')) return;
+        if (ev.target.closest('.vote-btn, .btn-hide-email')) return;
+        setInboxKeyboardNav(false);
         selectEmail(el.dataset.id);
       });
       el.addEventListener('dblclick', (ev) => {
-        if (ev.target.closest('.vote-btn')) return;
+        if (ev.target.closest('.vote-btn, .btn-hide-email')) return;
         ev.preventDefault();
         ev.stopPropagation();
         starEmail(el.dataset.id);
@@ -293,6 +451,11 @@
           ev.stopPropagation();
           voteSender(el.dataset.id, btn.dataset.vote);
         });
+      });
+      el.querySelector('.btn-hide-email')?.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        hideInboxEmail(el.dataset.id);
       });
     });
   }
@@ -334,22 +497,8 @@
   }
 
   function showOriginalEmail(row) {
-    const from = row.sender || '(unknown)';
-    const subject = row.subject || '(no subject)';
-    const date = fmtTime(row.received_at);
-    const snippetOnly = !row.body_text && !!row.snippet;
-    const bodyHtml = formatOriginalEmailBody(row.body_text || row.snippet || '');
     summaryBody.className = 'summary-body original-email-view';
-    summaryBody.innerHTML =
-      '<div class="original-email-meta">' +
-      `<p><span class="original-label">From</span> ${escapeHtml(from)}</p>` +
-      `<p><span class="original-label">Subject</span> ${escapeHtml(subject)}</p>` +
-      `<p><span class="original-label">Date</span> ${escapeHtml(date)}</p>` +
-      '</div>' +
-      (snippetOnly
-        ? '<p class="original-email-note">Showing snippet only — full message body is not stored.</p>'
-        : '') +
-      `<div class="original-email-body">${bodyHtml}</div>`;
+    summaryBody.innerHTML = buildOriginalEmailHtml(row);
   }
 
   function renderSummaryPanel() {
@@ -369,13 +518,21 @@
     }
   }
 
-  function selectEmail(id) {
+  function selectEmail(id, options = {}) {
     selectedId = id;
-    summaryViewMode = 'summary';
+    if (options.keyboard) {
+      setInboxKeyboardNav(true);
+    }
+    if (options.summaryView !== 'original') {
+      summaryViewMode = 'summary';
+    }
     renderInbox();
     renderSummaryPanel();
     btnResummarize.disabled = false;
     updateViewSwitcher();
+    if (options.scrollInbox) {
+      scrollSelectedInboxItemIntoView();
+    }
   }
 
   function enqueueAlert(alert) {
@@ -405,7 +562,8 @@
 
   function applySnapshot(snap) {
     demoMode = !!snap.demo_mode;
-    emails = sortEmailsDesc(snap.emails || []);
+    emails = sortEmailsForInbox(snap.emails || []);
+    pruneHiddenInbox();
     importantKeys = new Set(snap.important_sender_keys || []);
     senderInterest = snap.sender_interest || {};
     renderInbox();
@@ -438,7 +596,8 @@
         if (msg.type === 'log') appendLog(msg.data);
         if (msg.type === 'logs') renderActivityLog(msg.data || []);
         if (msg.type === 'emails') {
-          emails = sortEmailsDesc(msg.data || []);
+          emails = sortEmailsForInbox(msg.data || []);
+          pruneHiddenInbox();
           if (selectedId && !emails.some((e) => e.id === selectedId)) {
             selectedId = null;
             btnResummarize.disabled = true;
@@ -468,9 +627,32 @@
   }
 
   btnPoll.addEventListener('click', async () => {
+    appendLog({
+      ts: new Date().toLocaleTimeString(),
+      level: 'info',
+      message: 'Inbox check — Check now clicked, starting…',
+    });
     btnPoll.disabled = true;
     try {
-      await fetch('/api/poll', { method: 'POST' });
+      const res = await fetch('/api/poll', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ detailed: true }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.ok) {
+        appendLog({
+          ts: new Date().toLocaleTimeString(),
+          level: 'error',
+          message: data.error || 'Inbox check — request failed',
+        });
+      }
+    } catch (e) {
+      appendLog({
+        ts: new Date().toLocaleTimeString(),
+        level: 'error',
+        message: `Inbox check — request failed: ${e}`,
+      });
     } finally {
       btnPoll.disabled = false;
     }
@@ -489,29 +671,10 @@
   }
 
   if (btnEmptyInbox) {
-    btnEmptyInbox.addEventListener('click', async () => {
-      if (!emails.length) return;
-      if (!window.confirm('Remove all emails from the inbox?')) return;
-      btnEmptyInbox.disabled = true;
-      try {
-        const res = await fetch('/api/inbox/empty', { method: 'POST' });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || !data.ok) {
-          appendLog({
-            ts: new Date().toLocaleTimeString(),
-            level: 'error',
-            message: data.error || 'Failed to empty inbox',
-          });
-        }
-      } catch (e) {
-        appendLog({
-          ts: new Date().toLocaleTimeString(),
-          level: 'error',
-          message: `Failed to empty inbox: ${e}`,
-        });
-      } finally {
-        btnEmptyInbox.disabled = false;
-      }
+    btnEmptyInbox.addEventListener('click', () => {
+      if (!sortedInboxEmails().length) return;
+      if (!window.confirm('Hide all emails from the inbox display?')) return;
+      hideAllInboxEmails();
     });
   }
 
@@ -560,5 +723,20 @@
     });
   }
 
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown') return;
+    const active = document.activeElement;
+    const tag = active?.tagName?.toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+    if (active?.isContentEditable) return;
+    ev.preventDefault();
+    navigateInbox(ev.key === 'ArrowDown' ? 1 : -1);
+  });
+
+  inboxList?.addEventListener('mousedown', () => {
+    setInboxKeyboardNav(false);
+  });
+
+  loadHiddenInbox();
   connectSSE();
 })();
