@@ -58,7 +58,9 @@ from smartinbox.db import (
     get_setting,
     init_db,
     clear_all_emails,
+    delete_emails_received_since,
     list_emails,
+    list_unsummarized_emails,
     mark_email_alerted,
     set_email_starred,
     set_setting,
@@ -99,7 +101,7 @@ from smartinbox.email_summary import (
     resolve_system_prompt,
     summarize_email,
 )
-from smartinbox.email_spam import classify_email_spam
+from smartinbox.email_spam import DEFAULT_SPAM_MODEL, classify_email_spam
 from smartinbox.voice_summary import (
     brief_summary_for_tts,
     default_voice_style_prompt,
@@ -186,6 +188,14 @@ class SmartInboxCore:
             if saved_model and str(saved_model).strip()
             else str(self.ollama_config.get("model", "qwen2.5:3b"))
         )
+        saved_spam_model = get_setting(self._conn, "spam_ollama_model")
+        self._spam_ollama_model = (
+            str(saved_spam_model).strip()
+            if saved_spam_model and str(saved_spam_model).strip()
+            else str(self.ollama_config.get("spam_model", DEFAULT_SPAM_MODEL)).strip()
+            or self._ollama_model
+        )
+        self._spam_ollama_main_gpu = self._load_spam_ollama_main_gpu()
         default_concurrency = int(self.calendar_config.get("extract_concurrency", 6))
         saved_concurrency = get_setting(self._conn, "calendar_extract_concurrency")
         try:
@@ -284,6 +294,12 @@ class SmartInboxCore:
         self._poll_task: asyncio.Task[None] | None = None
         self._poll_lock = asyncio.Lock()
         self._email_tasks: set[asyncio.Task[None]] = set()
+        self._summary_backfill_task: asyncio.Task[None] | None = None
+        self._summary_in_flight = 0
+        summary_concurrency = int(self.ollama_config.get("summary_concurrency", 2))
+        self._email_summary_semaphore = asyncio.Semaphore(
+            max(1, min(8, summary_concurrency))
+        )
         self._last_alert_at = 0.0
         self._last_poll_at: float | None = None
 
@@ -301,6 +317,48 @@ class SmartInboxCore:
         task = asyncio.create_task(coro)
         self._email_tasks.add(task)
         task.add_done_callback(self._email_tasks.discard)
+
+    async def _wait_for_summary_priority(
+        self, *, except_email_id: str | None = None
+    ) -> None:
+        """Pause calendar/voice Ollama work while inbox summaries are still pending."""
+        while self._running:
+            if self._summary_in_flight > 0:
+                await asyncio.sleep(0.25)
+                continue
+            if self._summary_backfill_task and not self._summary_backfill_task.done():
+                await asyncio.sleep(1)
+                continue
+            rows = list_unsummarized_emails(self._conn, limit=10)
+            if except_email_id:
+                rows = [
+                    r for r in rows if str(r.get("id") or "") != except_email_id
+                ]
+            if rows:
+                await asyncio.sleep(1)
+                continue
+            return
+
+    def _load_spam_ollama_main_gpu(self) -> int | None:
+        saved = get_setting(self._conn, "spam_ollama_main_gpu")
+        if saved is None:
+            cfg = self.ollama_config.get("spam_main_gpu")
+            if cfg is None or cfg == "":
+                return 0
+            try:
+                gpu = int(cfg)
+            except (TypeError, ValueError):
+                return 0
+            if gpu < 0:
+                return None
+            return max(0, min(15, gpu))
+        try:
+            gpu = int(saved)
+        except (TypeError, ValueError):
+            return 0
+        if gpu < 0:
+            return None
+        return max(0, min(15, gpu))
 
     def _load_calendar_ollama_main_gpu(self) -> int | None:
         saved = get_setting(self._conn, "calendar_ollama_main_gpu")
@@ -657,6 +715,7 @@ class SmartInboxCore:
         *,
         index: int | None = None,
         total: int | None = None,
+        except_email_id: str | None = None,
     ) -> int:
         email_id = str(msg.get("id") or "")
         if not email_id:
@@ -731,6 +790,7 @@ class SmartInboxCore:
                     source = "summary date"
 
         if not events:
+            await self._wait_for_summary_priority(except_email_id=except_email_id)
             events, err = await extract_calendar_events(
                 base_url=self.get_ollama_base_url(),
                 model=self.get_ollama_model(),
@@ -828,9 +888,9 @@ class SmartInboxCore:
                 if result == "new":
                     new_for_acct += 1
                     stats["new"] += 1
-                    self._queue_stored_mail_processing(msg, result)
+                    self._queue_stored_mail_processing(msg, result, allow_alert=False)
                 elif result == "ics_updated":
-                    self._queue_stored_mail_processing(msg, result)
+                    self._queue_stored_mail_processing(msg, result, allow_alert=False)
                 else:
                     existing_for_acct += 1
                     stats["existing"] += 1
@@ -855,7 +915,13 @@ class SmartInboxCore:
         label = f"{days} day{'s' if days != 1 else ''}"
         return since_seconds, "days", days, label
 
-    async def run_mail_fetch(self, *, days: int | None = None, hours: int | None = None) -> None:
+    async def run_mail_fetch(
+        self,
+        *,
+        days: int | None = None,
+        hours: int | None = None,
+        replace: bool = False,
+    ) -> None:
         """Re-fetch mail from IMAP for the lookback window and store new messages normally."""
         if self._demo_mode or self._mail_fetch_job.get("running"):
             return
@@ -872,7 +938,9 @@ class SmartInboxCore:
             "unit": unit,
             "days": lookback if unit == "days" else None,
             "hours": lookback if unit == "hours" else None,
-            "phase": "fetch",
+            "phase": "delete" if replace else "fetch",
+            "replace": bool(replace),
+            "deleted": 0,
             "by_provider": {},
         }
         stats = {
@@ -883,12 +951,25 @@ class SmartInboxCore:
             "filtered": 0,
         }
         try:
+            if replace:
+                deleted = await asyncio.to_thread(
+                    delete_emails_received_since, self._conn, since_ts
+                )
+                self._mail_fetch_job["deleted"] = deleted
+                self.add_log(
+                    f"Mail refetch: deleted {deleted} local message"
+                    f"{'s' if deleted != 1 else ''} from last {lookback_label}",
+                    "info",
+                )
+                self._notify_emails()
             accounts = list_imap_account_records(self._conn)
             if not accounts:
                 self.add_log("Mail fetch: no mail accounts connected", "warning")
                 return
+            self._mail_fetch_job["phase"] = "fetch"
+            action = "re-import" if replace else "re-fetch"
             self.add_log(
-                f"Mail fetch started: re-fetch from {len(accounts)} connected account"
+                f"Mail fetch started: {action} from {len(accounts)} connected account"
                 f"{'s' if len(accounts) != 1 else ''} (last {lookback_label}, "
                 f"up to {max_fetch} messages each)",
                 "info",
@@ -965,10 +1046,13 @@ class SmartInboxCore:
                     else:
                         stats["existing"] += 1
                     self._log_import_result(msg, result, provider=provider)
-                    self._queue_stored_mail_processing(msg, result)
+                    self._queue_stored_mail_processing(
+                        msg, result, allow_alert=False, queue_summary=False
+                    )
                 else:
                     stats["existing"] += 1
                 self._mail_fetch_job["done"] = i + 1
+            self._queue_unsummarized_backfill()
             self.add_log(
                 f"Mail fetch complete: {stats['new']} new, {stats['existing']} already stored, "
                 f"{stats['filtered']} outside window, {stats['fetched']} fetched from "
@@ -987,12 +1071,20 @@ class SmartInboxCore:
                 "hours": snap.get("hours"),
                 "phase": "done",
                 "by_provider": snap.get("by_provider") or {},
+                "replace": bool(snap.get("replace")),
+                "deleted": int(snap.get("deleted") or 0),
             }
 
     def mail_fetch_running(self) -> bool:
         return bool(self._mail_fetch_job.get("running"))
 
-    def start_mail_fetch(self, *, days: int | None = None, hours: int | None = None) -> bool:
+    def start_mail_fetch(
+        self,
+        *,
+        days: int | None = None,
+        hours: int | None = None,
+        replace: bool = False,
+    ) -> bool:
         if self._demo_mode:
             return False
         if self._mail_fetch_job.get("running"):
@@ -1004,7 +1096,7 @@ class SmartInboxCore:
             if self._mail_fetch_lock.locked():
                 return
             async with self._mail_fetch_lock:
-                await self.run_mail_fetch(days=days, hours=hours)
+                await self.run_mail_fetch(days=days, hours=hours, replace=replace)
 
         self._mail_fetch_task = asyncio.create_task(_run())
         return True
@@ -1120,6 +1212,7 @@ class SmartInboxCore:
                 "info",
             )
             for i in range(0, total, batch_size):
+                await self._wait_for_summary_priority()
                 batch = to_scan[i : i + batch_size]
                 results = await asyncio.gather(
                     *(
@@ -1163,6 +1256,19 @@ class SmartInboxCore:
 
     def calendar_scan_running(self) -> bool:
         return bool(self._calendar_backfill.get("running"))
+
+    async def _start_calendar_backfill_when_ready(
+        self, *, days: int = 30, force: bool = False, import_from_source: bool = False
+    ) -> None:
+        """Run calendar backfill only after pending inbox summaries are done."""
+        while self._running:
+            await self._wait_for_summary_priority()
+            break
+        if not self._running:
+            return
+        self.start_calendar_backfill(
+            days=days, force=force, import_from_source=import_from_source
+        )
 
     def start_calendar_backfill(
         self, *, days: int = 5, force: bool = False, import_from_source: bool = False
@@ -1582,6 +1688,51 @@ class SmartInboxCore:
         set_setting(self._conn, "ollama_model", name)
         return self._ollama_model
 
+    def get_config_default_spam_model(self) -> str:
+        return str(self.ollama_config.get("spam_model", DEFAULT_SPAM_MODEL))
+
+    def get_spam_ollama_model(self) -> str:
+        return self._spam_ollama_model
+
+    def set_spam_ollama_model(self, model: str | None) -> str:
+        name = str(model or "").strip()
+        if not name:
+            raise ValueError("spam model required")
+        self._spam_ollama_model = name
+        set_setting(self._conn, "spam_ollama_model", name)
+        return self._spam_ollama_model
+
+    def get_spam_ollama_main_gpu(self) -> int | None:
+        return self._spam_ollama_main_gpu
+
+    def get_spam_ollama_options(self) -> dict[str, Any]:
+        from smartinbox.email_spam import build_spam_ollama_options
+
+        return build_spam_ollama_options(main_gpu=self._spam_ollama_main_gpu)
+
+    def set_spam_ollama_main_gpu(self, value: int | float | str | None) -> int | None:
+        if value is None or value == "" or str(value).strip().lower() == "auto":
+            self._spam_ollama_main_gpu = None
+            set_setting(self._conn, "spam_ollama_main_gpu", -1)
+            self.add_log("Spam Ollama GPU set to auto (Ollama scheduler)", "info")
+            return None
+        try:
+            gpu = int(value)
+        except (TypeError, ValueError):
+            raise ValueError("GPU index must be an integer") from None
+        if gpu < 0:
+            self._spam_ollama_main_gpu = None
+            set_setting(self._conn, "spam_ollama_main_gpu", -1)
+            self.add_log("Spam Ollama GPU set to auto (Ollama scheduler)", "info")
+            return None
+        self._spam_ollama_main_gpu = max(0, min(15, gpu))
+        set_setting(self._conn, "spam_ollama_main_gpu", self._spam_ollama_main_gpu)
+        self.add_log(
+            f"Spam Ollama GPU set to GPU {self._spam_ollama_main_gpu}",
+            "info",
+        )
+        return self._spam_ollama_main_gpu
+
     def get_calendar_extract_concurrency(self) -> int:
         return self._calendar_extract_concurrency
 
@@ -1808,7 +1959,8 @@ class SmartInboxCore:
                 "warning",
             )
         self._poll_task = asyncio.create_task(self._poll_loop())
-        self.start_calendar_backfill(days=30)
+        self._queue_unsummarized_backfill()
+        self._track_email_task(self._start_calendar_backfill_when_ready(days=30))
 
     async def stop(self) -> None:
         self._running = False
@@ -1826,6 +1978,13 @@ class SmartInboxCore:
             except asyncio.CancelledError:
                 pass
             self._calendar_backfill_task = None
+        if self._summary_backfill_task:
+            self._summary_backfill_task.cancel()
+            try:
+                await self._summary_backfill_task
+            except asyncio.CancelledError:
+                pass
+            self._summary_backfill_task = None
         if self._mail_fetch_task:
             self._mail_fetch_task.cancel()
             try:
@@ -2032,17 +2191,78 @@ class SmartInboxCore:
         row = get_email(self._conn, email_id)
         return bool(row and str(row.get("calendar_ics") or "").strip())
 
-    def _queue_stored_mail_processing(self, msg: dict[str, Any], upsert_result: str) -> None:
+    def _queue_stored_mail_processing(
+        self,
+        msg: dict[str, Any],
+        upsert_result: str,
+        *,
+        allow_alert: bool = True,
+        queue_summary: bool = True,
+    ) -> None:
         if self._demo_mode:
             return
         stored = dict(msg)
-        if upsert_result in ("new", "ics_updated"):
+        if upsert_result == "ics_updated":
             self._track_email_task(self._process_new_email_calendar(stored))
-        if upsert_result == "new":
+        elif upsert_result == "new":
             self._notify_emails()
-            self._track_email_task(self._process_new_email(stored))
+            if queue_summary:
+                self._track_email_task(
+                    self._process_new_email(stored, allow_alert=allow_alert)
+                )
 
-    async def _process_new_email_calendar(self, msg: dict[str, Any]) -> None:
+    def _queue_unsummarized_backfill(self, *, limit: int = 500) -> int:
+        """Start (or continue) sequential backfill for mail missing a summary."""
+        if self._demo_mode:
+            return 0
+        if self._summary_backfill_task and not self._summary_backfill_task.done():
+            return 0
+        rows = list_unsummarized_emails(self._conn, limit=limit)
+        if not rows:
+            return 0
+        self.add_log(
+            f"Summary backfill: queuing {len(rows)} unsummarized message"
+            f"{'s' if len(rows) != 1 else ''}",
+            "info",
+        )
+        self._summary_backfill_task = asyncio.create_task(
+            self._run_summary_backfill(limit=limit)
+        )
+        self._email_tasks.add(self._summary_backfill_task)
+        self._summary_backfill_task.add_done_callback(self._email_tasks.discard)
+        return len(rows)
+
+    async def _run_summary_backfill(self, *, limit: int = 500) -> None:
+        """Process unsummarized mail one at a time so Ollama is not flooded."""
+        try:
+            processed = 0
+            while self._running and processed < limit:
+                rows = list_unsummarized_emails(self._conn, limit=1)
+                if not rows:
+                    break
+                await self._process_new_email(rows[0], allow_alert=False)
+                processed += 1
+            if processed:
+                remaining = len(list_unsummarized_emails(self._conn, limit=limit))
+                if remaining:
+                    self.add_log(
+                        f"Summary backfill: {processed} processed, {remaining} still pending",
+                        "info",
+                    )
+                else:
+                    self.add_log(
+                        f"Summary backfill complete ({processed} message"
+                        f"{'s' if processed != 1 else ''})",
+                        "info",
+                    )
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            self.add_log(f"Summary backfill failed: {e}", "error")
+
+    async def _process_new_email_calendar(
+        self, msg: dict[str, Any], *, except_email_id: str | None = None
+    ) -> None:
         if self._demo_mode:
             return
         email_id = str(msg.get("id") or "")
@@ -2058,7 +2278,9 @@ class SmartInboxCore:
                 reset_calendar_data_for_emails(self._conn, [email_id])
             elif prior_count == 0:
                 reset_calendar_data_for_emails(self._conn, [email_id])
-            await self._extract_calendar_for_email(msg)
+            await self._extract_calendar_for_email(
+                msg, except_email_id=except_email_id
+            )
         except Exception as e:
             self.add_log(f"Calendar extract failed — {subject}: {e}", "warning")
 
@@ -2068,9 +2290,10 @@ class SmartInboxCore:
         if not email_id:
             return None
         subject = self._log_subject(str(msg.get("subject") or "(no subject)"))
+        spam_model = self.get_spam_ollama_model()
         is_spam, err = await classify_email_spam(
             base_url=self.get_ollama_base_url(),
-            model=self.get_ollama_model(),
+            model=spam_model,
             sender=str(msg.get("sender") or ""),
             subject=str(msg.get("subject") or ""),
             body=str(msg.get("body_text") or msg.get("snippet") or ""),
@@ -2078,7 +2301,8 @@ class SmartInboxCore:
                 msg.get("summary_detailed") or msg.get("summary_short") or ""
             ).strip()
             or None,
-            timeout=min(60.0, self.get_ollama_timeout()),
+            ollama_options=self.get_spam_ollama_options(),
+            timeout=self.get_ollama_timeout(),
         )
         if err:
             self.add_log(
@@ -2088,46 +2312,61 @@ class SmartInboxCore:
             return None
         update_email_spam(self._conn, email_id, is_spam=bool(is_spam))
         msg["is_spam"] = 1 if is_spam else 0
+        gpu = self.get_spam_ollama_main_gpu()
+        gpu_note = f", GPU {gpu}" if gpu is not None else ""
         if is_spam:
             self.add_log(
-                f"Spam check: junk — no voice alert for {subject}",
+                f"Spam check: junk — no voice alert for {subject} ({spam_model}{gpu_note})",
                 "info",
             )
         else:
-            self.add_log(f"Spam check: not spam — {subject}", "info")
+            self.add_log(
+                f"Spam check: not spam — {subject} ({spam_model}{gpu_note})",
+                "info",
+            )
         return bool(is_spam)
 
-    async def _process_new_email(self, msg: dict[str, Any]) -> None:
+    async def _process_new_email(
+        self, msg: dict[str, Any], *, allow_alert: bool = True
+    ) -> None:
         subject = str(msg.get("subject") or "(no subject)")
+        email_id = str(msg.get("id") or "")
         try:
-            summary, err = await summarize_email(
-                base_url=self.get_ollama_base_url(),
-                model=self.get_ollama_model(),
-                sender=str(msg.get("sender") or ""),
-                subject=str(msg.get("subject") or ""),
-                body=str(msg.get("body_text") or msg.get("snippet") or ""),
-                system_prompt=self._summary_system_prompt,
-                timeout=self.get_ollama_timeout(),
-            )
-            if summary:
-                msg["summary_short"] = summary[:500]
-                msg["summary_detailed"] = summary
-                update_email_summary(
-                    self._conn,
-                    str(msg["id"]),
-                    summary_short=summary[:500],
-                    summary_detailed=summary,
-                )
-                self.add_log(f"Summarized: {subject}", "info")
-                self._notify_emails()
-            elif err:
-                self.add_log(f"Summary failed: {err}", "warning")
+            async with self._email_summary_semaphore:
+                self._summary_in_flight += 1
+                try:
+                    summary, err = await summarize_email(
+                        base_url=self.get_ollama_base_url(),
+                        model=self.get_ollama_model(),
+                        sender=str(msg.get("sender") or ""),
+                        subject=str(msg.get("subject") or ""),
+                        body=str(msg.get("body_text") or msg.get("snippet") or ""),
+                        system_prompt=self._summary_system_prompt,
+                        timeout=self.get_ollama_timeout(),
+                    )
+                finally:
+                    self._summary_in_flight -= 1
+                if summary:
+                    msg["summary_short"] = summary[:500]
+                    msg["summary_detailed"] = summary
+                    update_email_summary(
+                        self._conn,
+                        email_id,
+                        summary_short=summary[:500],
+                        summary_detailed=summary,
+                    )
+                    self.add_log(f"Summarized: {subject}", "info")
+                    self._notify_emails()
+                elif err:
+                    self.add_log(f"Summary failed: {err}", "warning")
 
             is_spam = await self._classify_email_spam(msg)
             if is_spam:
                 return
 
-            if self._email_passes_watermark(msg):
+            await self._process_new_email_calendar(msg, except_email_id=email_id)
+
+            if allow_alert and self._email_passes_watermark(msg):
                 alert = await self._build_alert(msg)
                 if alert:
                     self._notify("email_alerts", [alert])
@@ -2201,6 +2440,9 @@ class SmartInboxCore:
                 msg.get("summary_detailed") or msg.get("summary_short") or ""
             ).strip()
             if summary_source:
+                await self._wait_for_summary_priority(
+                    except_email_id=str(msg.get("id") or "") or None
+                )
                 llm_user_message = brief_summary_for_tts(summary_source)
                 debug.update(
                     {
@@ -2555,6 +2797,9 @@ class SmartInboxCore:
     async def _build_alert(self, msg: dict[str, Any]) -> dict[str, Any] | None:
         if self._demo_mode:
             return None
+        await self._wait_for_summary_priority(
+            except_email_id=str(msg.get("id") or "") or None
+        )
         if not self.chatterbox_tts_config.get("enabled"):
             return None
         if not self._email_passes_watermark(msg):
@@ -2626,6 +2871,14 @@ class SmartInboxCore:
             "selected_model": selected,
             "config_default_model": self.get_config_default_model(),
             "model_listed": model_matches_listed(selected, names) if err is None else False,
+            "spam_model": self.get_spam_ollama_model(),
+            "config_default_spam_model": self.get_config_default_spam_model(),
+            "spam_model_listed": model_matches_listed(
+                self.get_spam_ollama_model(), names
+            )
+            if err is None
+            else False,
+            "spam_main_gpu": self.get_spam_ollama_main_gpu(),
             "system_prompt": self.get_summary_system_prompt(),
             "custom_system_prompt": self.get_custom_summary_system_prompt(),
             "default_system_prompt": self.get_default_summary_system_prompt(),

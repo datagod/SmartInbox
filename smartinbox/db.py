@@ -204,6 +204,21 @@ def list_emails(conn: sqlite3.Connection, *, limit: int = 50) -> list[dict[str, 
     return [dict(r) for r in rows]
 
 
+def list_unsummarized_emails(
+    conn: sqlite3.Connection, *, limit: int = 500
+) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT * FROM emails
+        WHERE summary_detailed IS NULL OR TRIM(summary_detailed) = ''
+        ORDER BY COALESCE(received_at, created_at) DESC
+        LIMIT ?
+        """,
+        (limit,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def get_email(conn: sqlite3.Connection, email_id: str) -> dict[str, Any] | None:
     row = conn.execute("SELECT * FROM emails WHERE id = ?", (email_id,)).fetchone()
     return dict(row) if row else None
@@ -213,3 +228,24 @@ def clear_all_emails(conn: sqlite3.Connection) -> int:
     cur = conn.execute("DELETE FROM emails")
     conn.commit()
     return int(cur.rowcount)
+
+
+def delete_emails_received_since(conn: sqlite3.Connection, since_ts: float) -> int:
+    """Delete local mail received on or after since_ts; returns rows removed."""
+    rows = conn.execute(
+        "SELECT id FROM emails WHERE COALESCE(received_at, created_at) >= ?",
+        (since_ts,),
+    ).fetchall()
+    if not rows:
+        return 0
+    email_ids = [str(r["id"]) for r in rows]
+    from smartinbox.calendar_events import reset_calendar_data_for_emails
+
+    reset_calendar_data_for_emails(conn, email_ids)
+    placeholders = ",".join("?" for _ in email_ids)
+    conn.execute(
+        f"DELETE FROM emails WHERE id IN ({placeholders})",
+        email_ids,
+    )
+    conn.commit()
+    return len(email_ids)

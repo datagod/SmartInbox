@@ -8,16 +8,18 @@ import httpx
 
 DEFAULT_SYSTEM = """You summarize incoming email for a busy homeowner.
 Be thorough and factual. Use only information from the email — do not invent details.
-Return markdown with:
+Return markdown with exactly these sections (use ## headings):
+
 ## Summary
 A clear paragraph of 4-6 sentences covering who sent it, what it is about, and anything time-sensitive.
 
 ## Key points
-- bullet list (5-8 items)
-- Each bullet should be a full sentence with specific details: names, dates, amounts, deadlines, links, or requests from the email.
+- 5-8 bullets, each a full sentence with specific details (names, dates, amounts, deadlines, links, requests)
 
 ## Action needed
-yes or no, and one short line explaining what to do if yes."""
+yes or no, and one short line explaining what to do if yes.
+
+Do not add other top-level sections. Do not repeat these instructions in the output."""
 
 
 def build_summary_ollama_options() -> dict[str, Any]:

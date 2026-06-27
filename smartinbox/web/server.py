@@ -434,10 +434,11 @@ def create_app(core: SmartInboxCore) -> FastAPI:
             lookback = int(lookback_raw)
         except (TypeError, ValueError):
             lookback = 5
+        replace = bool(body.get("replace") or body.get("delete_first"))
         if unit == "hours":
-            started = core.start_mail_fetch(hours=lookback)
+            started = core.start_mail_fetch(hours=lookback, replace=replace)
         else:
-            started = core.start_mail_fetch(days=lookback)
+            started = core.start_mail_fetch(days=lookback, replace=replace)
         view = core.get_process_view()
         if not started and not core.get_demo_mode():
             if core.mail_fetch_running():
@@ -979,6 +980,35 @@ def create_app(core: SmartInboxCore) -> FastAPI:
             saved = core.set_ollama_model(model)
             core.add_log(f"Ollama model set to {saved}", "info")
             return JSONResponse({"ok": True, "model": saved})
+        except ValueError as e:
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+
+    @app.post("/api/llm/spam")
+    async def api_llm_set_spam(request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        model = str(body.get("model") or "").strip()
+        if not model:
+            return JSONResponse({"ok": False, "error": "model required"}, status_code=400)
+        try:
+            saved = core.set_spam_ollama_model(model)
+            gpu = core.get_spam_ollama_main_gpu()
+            if "main_gpu" in body:
+                gpu = core.set_spam_ollama_main_gpu(body.get("main_gpu"))
+            core.add_log(
+                f"Spam Ollama model set to {saved}"
+                + (f" (GPU {gpu})" if gpu is not None else " (auto GPU)"),
+                "info",
+            )
+            return JSONResponse(
+                {
+                    "ok": True,
+                    "model": saved,
+                    "spam_main_gpu": gpu,
+                }
+            )
         except ValueError as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
 

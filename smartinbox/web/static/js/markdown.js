@@ -1,4 +1,13 @@
 (function (global) {
+  const SECTION_TITLES = {
+    summary: 'Summary',
+    'key points': 'Key points',
+    'key point': 'Key points',
+    'action needed': 'Action needed',
+    'action items': 'Action needed',
+    actions: 'Action needed',
+  };
+
   function escapeHtml(s) {
     return String(s)
       .replace(/&/g, '&amp;')
@@ -13,6 +22,20 @@
     out = out.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
     out = out.replace(/\*([^*]+)\*/g, '<em>$1</em>');
     return out;
+  }
+
+  function normalizeHeading(title) {
+    const raw = String(title || '').trim().replace(/:+\s*$/, '');
+    const lower = raw.toLowerCase();
+    if (lower === 'from' || lower.startsWith('from ')) {
+      const sender = raw.replace(/^from\s*/i, '').trim();
+      return { kind: 'from', label: sender || raw };
+    }
+    const section = SECTION_TITLES[lower];
+    if (section) {
+      return { kind: 'section', label: section, slug: lower.replace(/\s+/g, '-') };
+    }
+    return null;
   }
 
   function renderMarkdown(text) {
@@ -40,23 +63,43 @@
         continue;
       }
 
-      const h3 = trimmed.match(/^###\s+(.+)$/);
-      const h2 = trimmed.match(/^##\s+(.+)$/);
-      const h1 = trimmed.match(/^#\s+(.+)$/);
+      const heading = trimmed.match(/^(#{1,3})\s+(.+)$/);
       const ul = trimmed.match(/^[-*+]\s+(.+)$/);
       const ol = trimmed.match(/^\d+\.\s+(.+)$/);
 
-      if (h1 || h2) {
+      if (heading) {
         closeList();
-        const title = (h2 || h1)[1];
-        html.push(`<h2>${inlineFormat(title)}</h2>`);
+        const normalized = normalizeHeading(heading[2]);
+        if (normalized?.kind === 'from') {
+          html.push(`<div class="summary-from">${inlineFormat(normalized.label)}</div>`);
+          continue;
+        }
+        if (normalized?.kind === 'section') {
+          html.push(
+            `<h2 class="summary-section summary-section-${normalized.slug}">${inlineFormat(normalized.label)}</h2>`
+          );
+          continue;
+        }
+        if (heading[1] === '###') {
+          html.push(`<h3>${inlineFormat(heading[2].replace(/:+\s*$/, ''))}</h3>`);
+          continue;
+        }
+        html.push(`<h2>${inlineFormat(heading[2].replace(/:+\s*$/, ''))}</h2>`);
         continue;
       }
-      if (h3) {
-        closeList();
-        html.push(`<h3>${inlineFormat(h3[1])}</h3>`);
-        continue;
+
+      const boldSection = trimmed.match(/^\*\*([^*]+)\*\*\s*$/);
+      if (boldSection) {
+        const normalized = normalizeHeading(boldSection[1]);
+        if (normalized?.kind === 'section') {
+          closeList();
+          html.push(
+            `<h2 class="summary-section summary-section-${normalized.slug}">${inlineFormat(normalized.label)}</h2>`
+          );
+          continue;
+        }
       }
+
       if (ul) {
         if (!inList || listType !== 'ul') {
           closeList();

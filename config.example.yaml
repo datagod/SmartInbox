@@ -13,6 +13,8 @@ gmail:
 ollama:
   base_url: http://127.0.0.1:11434
   model: qwen2.5:3b
+  spam_model: llama3.2:1b    # smaller model for spam checks only
+  spam_main_gpu: 0           # Ollama main_gpu for spam (omit or -1 for auto)
   timeout: 120
   prompts_dir: prompts    # saved LLM system prompts (.txt)
 

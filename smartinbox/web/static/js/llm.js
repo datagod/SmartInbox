@@ -19,6 +19,12 @@
   const btnLoadPrompt = document.getElementById('btn-load-prompt');
   const btnPreviewPrompt = document.getElementById('btn-preview-prompt');
   const btnDeletePromptFile = document.getElementById('btn-delete-prompt-file');
+  const spamModelStatus = document.getElementById('spam-model-status');
+  const spamModelPicker = document.getElementById('spam-model-picker');
+  const spamModelSelect = document.getElementById('spam-model-select');
+  const spamOllamaGpu = document.getElementById('spam-ollama-gpu');
+  const spamModelActions = document.getElementById('spam-model-actions');
+  const btnSaveSpamModel = document.getElementById('btn-save-spam-model');
 
   let state = null;
   let promptDirty = false;
@@ -129,6 +135,61 @@
     }
   }
 
+  function renderSpamModel(data) {
+    if (!spamModelStatus) return;
+    const models = data.models || [];
+    const selected = data.spam_model || '';
+    const gpu = data.spam_main_gpu;
+
+    if (!data.reachable) {
+      if (spamModelPicker) spamModelPicker.hidden = true;
+      if (spamModelActions) spamModelActions.hidden = true;
+      setStatus(spamModelStatus, 'Unavailable — Ollama not reachable', true);
+      return;
+    }
+
+    if (data.spam_model_listed) {
+      setStatus(
+        spamModelStatus,
+        `Active: ${selected}${gpu == null ? ' · auto GPU' : ` · GPU ${gpu}`}`,
+        false
+      );
+    } else {
+      setStatus(
+        spamModelStatus,
+        `Selected model "${selected}" is not loaded in Ollama`,
+        true
+      );
+    }
+
+    if (spamOllamaGpu) {
+      spamOllamaGpu.value = gpu == null ? '' : String(gpu);
+    }
+
+    if (!models.length || !spamModelPicker || !spamModelSelect) {
+      if (spamModelPicker) spamModelPicker.hidden = true;
+      if (spamModelActions) spamModelActions.hidden = true;
+      return;
+    }
+
+    spamModelPicker.hidden = false;
+    if (spamModelActions) spamModelActions.hidden = false;
+    spamModelSelect.innerHTML = models
+      .map((m) => {
+        const name = m.name;
+        const selectedAttr = name === selected ? ' selected' : '';
+        return `<option value="${name}"${selectedAttr}>${name}</option>`;
+      })
+      .join('');
+    if (!spamModelSelect.value && selected) {
+      const opt = document.createElement('option');
+      opt.value = selected;
+      opt.textContent = selected;
+      opt.selected = true;
+      spamModelSelect.appendChild(opt);
+    }
+  }
+
   function renderPrompt(data) {
     if (promptsDir && data.prompts_dir) {
       promptsDir.textContent = data.prompts_dir;
@@ -145,6 +206,7 @@
     const res = await fetch('/api/llm');
     state = await res.json();
     renderModels(state);
+    renderSpamModel(state);
     renderPrompt(state);
   }
 
@@ -159,6 +221,29 @@
     if (btnOverwritePromptFile) btnOverwritePromptFile.disabled = !file;
     if (btnDeletePromptFile) {
       btnDeletePromptFile.disabled = !file || file === 'default.txt';
+    }
+  });
+
+  btnSaveSpamModel?.addEventListener('click', async () => {
+    const model = spamModelSelect ? spamModelSelect.value : '';
+    const gpuRaw = spamOllamaGpu ? spamOllamaGpu.value.trim() : '';
+    const mainGpu = gpuRaw === '' ? 'auto' : Number(gpuRaw);
+    btnSaveSpamModel.disabled = true;
+    try {
+      const res = await fetch('/api/llm/spam', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model, main_gpu: mainGpu }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        setStatus(spamModelStatus, data.error || 'Failed to save spam settings', true);
+        return;
+      }
+      await loadLlm();
+      setStatus(spamModelStatus, `Spam settings saved: ${data.model}`, false);
+    } finally {
+      btnSaveSpamModel.disabled = false;
     }
   });
 

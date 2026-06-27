@@ -45,6 +45,28 @@
     </section>
 
     <section class="set-panel">
+      <h2>Spam check</h2>
+      <p class="set-hint">
+        Uses a separate small Ollama model before voice alerts. Summaries still use the model above.
+        GPU index is passed to Ollama as <code>main_gpu</code> (same as calendar extraction).
+      </p>
+      <p class="gmail-status" id="spam-model-status">Checking…</p>
+      <div class="set-grid">
+        <label class="set-field" id="spam-model-picker" hidden>
+          <span>Spam model</span>
+          <select class="set-select" id="spam-model-select"></select>
+        </label>
+        <label class="set-field">
+          <span>Ollama GPU</span>
+          <input type="number" class="set-input" id="spam-ollama-gpu" min="0" max="15" step="1" value="0" placeholder="auto">
+        </label>
+      </div>
+      <div class="actions-row" id="spam-model-actions" hidden>
+        <button type="button" class="btn btn-primary" id="btn-save-spam-model">Save spam settings</button>
+      </div>
+    </section>
+
+    <section class="set-panel">
       <h2>Email summary prompt</h2>
       <p class="set-hint">
         System prompt sent to Ollama when summarizing email. The user message still includes
@@ -83,6 +105,6 @@
       </div>
     </section>
   </div>
-  <script src="/static/js/llm.js?v=2"></script>
+  <script src="/static/js/llm.js?v=3"></script>
 </body>
 </html>

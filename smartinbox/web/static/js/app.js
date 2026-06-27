@@ -11,9 +11,11 @@
   const btnClearActivityLog = document.getElementById('btn-clear-activity-log');
   const btnResummarize = document.getElementById('btn-resummarize');
   const summaryViewOptions = document.querySelectorAll('.summary-view-option');
+  const volumeSlider = document.getElementById('alert-volume');
 
   const THEME_KEY = 'smartinbox.summaryTheme';
   const INBOX_HIDDEN_KEY = 'smartinbox-inbox-hidden';
+  const VOLUME_KEY = 'smartinbox-alert-volume';
   const THEMES = [
     'modern',
     'ansi',
@@ -39,6 +41,9 @@
     'lsmail',
     'c64',
     'macintosh',
+    'dune1984',
+    'logansrun',
+    'computer50s',
   ];
 
   let emails = [];
@@ -50,6 +55,39 @@
   let senderInterest = {};
   const audioQueue = [];
   let playing = false;
+  let currentAlertAudio = null;
+
+  function clampVolume(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return 1;
+    return Math.min(1, Math.max(0, n));
+  }
+
+  function loadAlertVolume() {
+    const stored = localStorage.getItem(VOLUME_KEY);
+    if (stored == null) return 1;
+    return clampVolume(parseFloat(stored));
+  }
+
+  let alertVolume = loadAlertVolume();
+
+  function applyAlertVolume(value) {
+    alertVolume = clampVolume(value);
+    localStorage.setItem(VOLUME_KEY, String(alertVolume));
+    if (volumeSlider) {
+      volumeSlider.value = String(Math.round(alertVolume * 100));
+    }
+    if (currentAlertAudio) {
+      currentAlertAudio.volume = alertVolume;
+    }
+  }
+
+  if (volumeSlider) {
+    volumeSlider.value = String(Math.round(alertVolume * 100));
+    volumeSlider.addEventListener('input', () => {
+      applyAlertVolume(Number(volumeSlider.value) / 100);
+    });
+  }
 
   function fmtTime(ts) {
     if (!ts) return '—';
@@ -478,8 +516,8 @@
   }
 
   function showSummaryMarkdown(text) {
-    summaryBody.className = 'summary-body markdown-body';
-    summaryBody.innerHTML = renderMarkdown(text);
+    summaryBody.className = 'summary-body';
+    summaryBody.innerHTML = `<div class="markdown-body">${renderMarkdown(text)}</div>`;
   }
 
   function showSummaryMessage(text, kind) {
@@ -514,12 +552,13 @@
       showOriginalEmail(row);
       return;
     }
-    const text = row.summary_detailed || row.summary_short || row.snippet || '';
+    const text = (row.summary_detailed || row.summary_short || '').trim();
     if (text) {
       showSummaryMarkdown(text);
     } else {
-      summaryBody.className = 'summary-body markdown-body';
-      summaryBody.innerHTML = '<p class="summary-empty">(no summary yet)</p>';
+      summaryBody.className = 'summary-body';
+      summaryBody.innerHTML =
+        '<div class="markdown-body"><p class="summary-empty">(no summary yet)</p></div>';
     }
   }
 
@@ -551,15 +590,20 @@
     playing = true;
     const url = audioQueue.shift();
     const audio = new Audio(url);
+    audio.volume = alertVolume;
+    currentAlertAudio = audio;
     audio.onended = () => {
+      currentAlertAudio = null;
       playing = false;
       drainQueue();
     };
     audio.onerror = () => {
+      currentAlertAudio = null;
       playing = false;
       drainQueue();
     };
     audio.play().catch(() => {
+      currentAlertAudio = null;
       playing = false;
       drainQueue();
     });

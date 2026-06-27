@@ -4,8 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SmartInbox</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=21">
-  <link rel="stylesheet" href="/static/css/summary-themes.css?v=27">
+  <link rel="stylesheet" href="/static/css/styles.css?v=22">
+  <link rel="stylesheet" href="/static/css/summary-themes.css?v=31">
 </head>
 <body>
   <div class="app">
@@ -23,7 +23,15 @@
         <a href="/process">Process</a>
         <a href="/storage">Storage</a>
       </nav>
-      <p class="status-line" id="conn-status">Connecting…</p>
+      <div class="header-meta">
+        <p class="status-line" id="conn-status">Connecting…</p>
+        <label class="volume-control" title="Voice alert volume">
+          <svg class="volume-icon" width="14" height="14" viewBox="0 0 16 16" aria-hidden="true">
+            <path fill="currentColor" d="M9 3.5 5.5 6H3v4h2.5L9 12.5V3.5zm1.2-.9v11.8c1.7-1 2.8-2.8 2.8-4.9s-1.1-3.9-2.8-4.9zM2 5h1V3H1v10h2v-2H2V5z"/>
+          </svg>
+          <input type="range" class="volume-slider" id="alert-volume" min="0" max="100" value="100" aria-label="Voice alert volume">
+        </label>
+      </div>
     </header>
 
     <main class="main">
@@ -75,6 +83,9 @@
               <option value="lsmail">Leisure Suit Mailman</option>
               <option value="c64">Commodore 64</option>
               <option value="macintosh">Macintosh</option>
+              <option value="dune1984">Dune 1984</option>
+              <option value="logansrun">Logan's Run</option>
+              <option value="computer50s">Early 1950s computer</option>
             </select>
           </label>
         </div>
@@ -142,6 +153,66 @@
               <span class="kw-badge kw-badge-pink">♡ INBOX</span>
               <span class="kw-badge kw-badge-lavender">✿ SUMMARY</span>
               <span class="kw-badge kw-badge-mint">☆ GIRL MODE</span>
+            </div>
+          </div>
+          <div class="c50-panel-header" aria-hidden="true">
+            <div class="c50-lamp-row">
+              <span class="c50-lamp c50-lamp-red"></span>
+              <span class="c50-lamp c50-lamp-amber"></span>
+              <span class="c50-lamp c50-lamp-green c50-lamp-on"></span>
+              <span class="c50-lamp c50-lamp-amber c50-lamp-on"></span>
+              <span class="c50-lamp c50-lamp-red"></span>
+              <span class="c50-lamp c50-lamp-green"></span>
+              <span class="c50-lamp c50-lamp-amber"></span>
+              <span class="c50-lamp c50-lamp-green c50-lamp-on"></span>
+            </div>
+            <div class="c50-lockup">
+              <span class="c50-tube-bank"></span>
+              <div class="c50-corp">
+                <span class="c50-name">UNIVAC</span>
+                <span class="c50-sub">Computing Laboratory · Mail Summary Processor</span>
+              </div>
+            </div>
+            <div class="c50-sys-line">
+              <span class="c50-bright">BATCH JOB MAILSUM</span>
+              <span class="c50-sep">|</span>
+              <span class="c50-sys">MAGNETIC TAPE UNIT 1</span>
+              <span class="c50-sep">|</span>
+              <span class="c50-run">RUNNING</span>
+            </div>
+          </div>
+          <div class="logan-terminal-header" aria-hidden="true">
+            <div class="lr-carousel-stripe"></div>
+            <div class="lr-lockup">
+              <span class="lr-palmflower"></span>
+              <div class="lr-corp">
+                <span class="lr-name">DOMECITY</span>
+                <span class="lr-sub">Sandman Division · Mail Intelligence</span>
+              </div>
+            </div>
+            <div class="lr-sys-line">
+              <span class="lr-bright">LIFE CLOCK STATION</span>
+              <span class="lr-sep">·</span>
+              <span class="lr-sys">RENEWAL CENTER 2274</span>
+              <span class="lr-sep">·</span>
+              <span class="lr-lastday">LASTDAY PROTOCOL</span>
+            </div>
+          </div>
+          <div class="dune-terminal-header" aria-hidden="true">
+            <div class="dune-spice-stripe"></div>
+            <div class="dune-lockup">
+              <span class="dune-crest"></span>
+              <div class="dune-corp">
+                <span class="dune-name">ARRAKIS</span>
+                <span class="dune-sub">House Atreides · Imperial Mail Relay</span>
+              </div>
+            </div>
+            <div class="dune-sys-line">
+              <span class="dune-bright">CALADAN UPLINK</span>
+              <span class="dune-sep">◆</span>
+              <span class="dune-sys">ORNITHOPTER NET 84</span>
+              <span class="dune-sep">◆</span>
+              <span class="dune-spice">SPICE MUST FLOW</span>
             </div>
           </div>
           <div class="empire-terminal-header" aria-hidden="true">
@@ -227,8 +298,10 @@
 <span class="p11-dim">.</span> <span class="p11-amber">RT-11SJ V05-03</span>  <span class="p11-dim">.</span><span class="p11-bright">BA</span>  <span class="p11-dim">SMARTINBOX MAIL SUMMARY</span>
 <span class="p11-dim">.</span> <span class="p11-dim">TTY0:</span> <span class="p11-bright">9600 BAUD</span>  <span class="p11-dim">KW11-L:</span> <span class="p11-bright">ON</span>  <span class="p11-dim">LPT:</span> <span class="p11-bright">OFF</span>
 <span class="p11-dim">.</span> <span class="p11-amber">READY</span></pre>
-          <div class="summary-body markdown-body" id="summary-body">
-            <p class="summary-empty">Select an email to view its Ollama summary.</p>
+          <div class="summary-body" id="summary-body">
+            <div class="markdown-body">
+              <p class="summary-empty">Select an email to view its Ollama summary.</p>
+            </div>
           </div>
           <div class="nasa70-panel-footer" aria-hidden="true">
             <div class="n70-footer-line">
@@ -245,6 +318,37 @@
               <span class="kw-footer-text">がんばって読んでね — YOU CAN DO IT</span>
               <span class="kw-heart">♡</span>
             </div>
+          </div>
+          <div class="c50-panel-footer" aria-hidden="true">
+            <div class="c50-footer-line">
+              <span class="c50-dim">CHECK PRINTOUT</span>
+              <span class="c50-sep">|</span>
+              <span class="c50-bright">JOB COMPLETE — REMOVE FANFOLD</span>
+            </div>
+            <div class="c50-lamp-row c50-lamp-row-bottom">
+              <span class="c50-lamp c50-lamp-green c50-lamp-on"></span>
+              <span class="c50-lamp c50-lamp-amber"></span>
+              <span class="c50-lamp c50-lamp-red"></span>
+              <span class="c50-lamp c50-lamp-green"></span>
+              <span class="c50-lamp c50-lamp-amber c50-lamp-on"></span>
+              <span class="c50-lamp c50-lamp-red"></span>
+            </div>
+          </div>
+          <div class="logan-terminal-footer" aria-hidden="true">
+            <div class="lr-footer-line">
+              <span class="lr-dim">ANUBIS CONFIRMED</span>
+              <span class="lr-sep">·</span>
+              <span class="lr-bright">THERE IS NO SANCTUARY</span>
+            </div>
+            <div class="lr-carousel-stripe lr-carousel-stripe-bottom"></div>
+          </div>
+          <div class="dune-terminal-footer" aria-hidden="true">
+            <div class="dune-footer-line">
+              <span class="dune-dim">BENE GESSERIT VERIFIED</span>
+              <span class="dune-sep">◆</span>
+              <span class="dune-bright">THE SLEEPER MUST AWAKEN</span>
+            </div>
+            <div class="dune-spice-stripe dune-spice-stripe-bottom"></div>
           </div>
           <div class="empire-terminal-footer" aria-hidden="true">
             <div class="imp-footer-line">
@@ -385,7 +489,7 @@
       </section>
     </main>
   </div>
-  <script src="/static/js/markdown.js?v=1"></script>
-  <script src="/static/js/app.js?v=44"></script>
+  <script src="/static/js/markdown.js?v=2"></script>
+  <script src="/static/js/app.js?v=49"></script>
 </body>
 </html>

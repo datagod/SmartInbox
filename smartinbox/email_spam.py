@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 import httpx
+
+DEFAULT_SPAM_MODEL = "llama3.2:1b"
+
 
 DEFAULT_SPAM_SYSTEM = """You classify incoming email for a personal inbox.
 Decide if the message looks like spam, phishing, scam, or unwanted bulk marketing.
@@ -20,6 +24,18 @@ def default_spam_system_prompt() -> str:
     return DEFAULT_SPAM_SYSTEM
 
 
+def build_spam_ollama_options(*, main_gpu: int | None = None) -> dict[str, Any]:
+    """Ollama runtime options for spam checks — tiny output, fast turnaround."""
+    opts: dict[str, Any] = {
+        "num_predict": 48,
+        "temperature": 0,
+        "num_gpu": -1,
+    }
+    if main_gpu is not None:
+        opts["main_gpu"] = int(main_gpu)
+    return opts
+
+
 def build_spam_prompt(
     *,
     sender: str,
@@ -27,7 +43,6 @@ def build_spam_prompt(
     body: str,
     summary: str | None = None,
 ) -> str:
-    body_trim = (body or "")[:8000]
     summary_trim = (summary or "").strip()[:1200]
     parts = [
         f"From: {sender or '(unknown)'}",
@@ -35,7 +50,11 @@ def build_spam_prompt(
     ]
     if summary_trim:
         parts.append(f"Summary:\n{summary_trim}")
-    parts.append(f"Body:\n{body_trim or '(empty)'}")
+        snippet = (body or "").strip()[:800]
+        if snippet:
+            parts.append(f"Opening snippet:\n{snippet}")
+    else:
+        parts.append(f"Body:\n{(body or '')[:3500] or '(empty)'}")
     return "\n\n".join(parts)
 
 
@@ -72,12 +91,13 @@ async def classify_email_spam(
     body: str,
     summary: str | None = None,
     system_prompt: str | None = None,
+    ollama_options: dict[str, Any] | None = None,
     timeout: float = 60.0,
 ) -> tuple[bool | None, str | None]:
     """Ask Ollama if email looks spammy. Returns (is_spam, error)."""
     url = f"{base_url.rstrip('/')}/api/chat"
     system = (system_prompt or "").strip() or DEFAULT_SPAM_SYSTEM
-    payload = {
+    payload: dict[str, Any] = {
         "model": model,
         "messages": [
             {"role": "system", "content": system},
@@ -92,6 +112,7 @@ async def classify_email_spam(
             },
         ],
         "stream": False,
+        "options": ollama_options or build_spam_ollama_options(),
     }
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:

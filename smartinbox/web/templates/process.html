@@ -32,6 +32,8 @@
             Connects to all linked inboxes at the source (Gmail and Proton via IMAP), pulls messages
             for the lookback window, and stores new ones in your local database — same as when mail
             arrives during normal polling (summaries and calendar extraction run for new messages).
+            Use <strong>Delete &amp; re-import</strong> to remove local copies in that window first,
+            then fetch again so summaries and spam checks run from scratch.
           </p>
           <p class="calendar-inboxes" id="process-inboxes"></p>
           <div class="process-fetch-controls">
@@ -56,6 +58,7 @@
             </div>
             <div class="process-fetch-actions">
               <button type="button" class="btn btn-primary" id="btn-fetch-mail">Fetch mail</button>
+              <button type="button" class="btn btn-danger" id="btn-reimport-mail">Delete &amp; re-import</button>
               <button type="button" class="btn btn-secondary" id="btn-refresh-process">Refresh</button>
             </div>
           </div>
@@ -98,6 +101,6 @@
     </div>
   </div>
   <script src="/static/js/activity-log-resize.js?v=4"></script>
-  <script src="/static/js/process.js?v=3"></script>
+  <script src="/static/js/process.js?v=4"></script>
 </body>
 </html>

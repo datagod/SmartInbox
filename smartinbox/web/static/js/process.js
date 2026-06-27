@@ -8,6 +8,7 @@
   const processLookback = document.getElementById('process-lookback');
   const processLookbackUnit = document.getElementById('process-lookback-unit');
   const btnFetch = document.getElementById('btn-fetch-mail');
+  const btnReimport = document.getElementById('btn-reimport-mail');
   const btnRefresh = document.getElementById('btn-refresh-process');
   const processActivityLog = document.getElementById('process-activity-log');
   const btnClearActivityLog = document.getElementById('btn-clear-process-activity-log');
@@ -38,6 +39,7 @@
     return (
       msg.startsWith('Inbox check') ||
       msg.startsWith('Mail fetch') ||
+      msg.startsWith('Mail refetch') ||
       msg.startsWith('New email (')
     );
   }
@@ -195,6 +197,7 @@
   }
 
   function phaseLabel(phase) {
+    if (phase === 'delete') return 'Deleting local mail';
     if (phase === 'fetch') return 'Fetching from mail servers';
     if (phase === 'store') return 'Storing in database';
     return 'Working';
@@ -217,11 +220,19 @@
     const providerNote = formatProviderCounts(job.by_provider);
     if (job.running) {
       const phase = phaseLabel(job.phase);
-      let line = `${phase}: ${job.done || 0} / ${job.total || '…'} (re-fetching last ${windowLabel})`;
+      const verb = job.replace ? 're-importing' : 're-fetching';
+      let line = `${phase}: ${job.done || 0} / ${job.total || '…'} (${verb} last ${windowLabel})`;
+      if (job.phase === 'delete' && (job.deleted || 0) > 0) {
+        line = `${phase}: removed ${job.deleted} local message${job.deleted === 1 ? '' : 's'} (${verb} last ${windowLabel})`;
+      }
       if (providerNote && job.phase === 'store') line += ` — ${providerNote}`;
       parts.push(`${line}…`);
     } else if ((job.total || 0) > 0 && (job.done || 0) >= (job.total || 0)) {
-      let line = `Fetched ${job.total} message${job.total === 1 ? '' : 's'} (last ${windowLabel})`;
+      const verb = job.replace ? 'Re-imported' : 'Fetched';
+      let line = `${verb} ${job.total} message${job.total === 1 ? '' : 's'} (last ${windowLabel})`;
+      if (job.replace && (job.deleted || 0) > 0) {
+        line += ` — ${job.deleted} deleted locally first`;
+      }
       if (providerNote) line += ` — ${providerNote}`;
       parts.push(line);
     } else if (!data.demo_mode) {
@@ -235,6 +246,7 @@
 
   function setBusy(busy, demoMode) {
     if (btnFetch) btnFetch.disabled = busy || !!demoMode;
+    if (btnReimport) btnReimport.disabled = busy || !!demoMode;
     if (btnRefresh) btnRefresh.disabled = busy;
     if (processLookback) processLookback.disabled = busy || !!demoMode;
     if (processLookbackUnit) processLookbackUnit.disabled = busy || !!demoMode;
@@ -261,20 +273,26 @@
     }
   }
 
-  async function fetchMail() {
+  async function fetchMail({ replace = false } = {}) {
     const lookback = fetchLookback();
     setLookbackControls(lookback.value, lookback.unit);
     saveLookback(lookback.value, lookback.unit);
     setBusy(true, false);
+    const windowText = lookbackLabel(lookback.value, lookback.unit);
     if (processStatus) {
-      processStatus.textContent =
-        `Starting mail re-fetch for last ${lookbackLabel(lookback.value, lookback.unit)}…`;
+      processStatus.textContent = replace
+        ? `Deleting local mail and re-importing last ${windowText}…`
+        : `Starting mail re-fetch for last ${windowText}…`;
     }
     try {
       const res = await fetch('/api/process/fetch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lookback: lookback.value, unit: lookback.unit }),
+        body: JSON.stringify({
+          lookback: lookback.value,
+          unit: lookback.unit,
+          replace: !!replace,
+        }),
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'Fetch failed');
@@ -330,6 +348,17 @@
 
   btnRefresh?.addEventListener('click', () => loadProcess());
   btnFetch?.addEventListener('click', () => fetchMail());
+  btnReimport?.addEventListener('click', async () => {
+    const lookback = fetchLookback();
+    const windowText = lookbackLabel(lookback.value, lookback.unit);
+    const ok = window.confirm(
+      `Delete all local mail from the last ${windowText} and re-import from your inboxes?\n\n` +
+        'Summaries, spam checks, and calendar extraction will run again for imported messages. ' +
+        'This cannot be undone.'
+    );
+    if (!ok) return;
+    await fetchMail({ replace: true });
+  });
   btnClearActivityLog?.addEventListener('click', async () => {
     try {
       await fetch('/api/logs/clear', { method: 'POST' });
