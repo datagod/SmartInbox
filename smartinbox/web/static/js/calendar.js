@@ -1,7 +1,7 @@
 (function () {
   const DAYS_KEY = 'smartinbox-calendar-days';
-  const VIEW_KEY = 'smartinbox-calendar-view';
-
+  const LOOKBACK_KEY = 'smartinbox-calendar-lookback';
+  const UNIT_KEY = 'smartinbox-calendar-lookback-unit';
   const periodTitle = document.getElementById('period-title');
   const viewHost = document.getElementById('calendar-view-host');
   const eventList = document.getElementById('calendar-event-list');
@@ -9,15 +9,24 @@
   const calendarStatus = document.getElementById('calendar-status');
   const calendarInboxes = document.getElementById('calendar-inboxes');
   const calendarDays = document.getElementById('calendar-days');
+  const calendarLookback = document.getElementById('calendar-lookback');
+  const calendarLookbackUnit = document.getElementById('calendar-lookback-unit');
   const btnRefresh = document.getElementById('btn-refresh-calendar');
-  const btnProcess = document.getElementById('btn-process-calendar');
+  const btnClearQueue = document.getElementById('btn-calendar-clear-queue');
+  const btnReprocess = document.getElementById('btn-calendar-reprocess');
   const btnCalPrev = document.getElementById('btn-cal-prev');
   const btnCalNext = document.getElementById('btn-cal-next');
   const btnCalToday = document.getElementById('btn-cal-today');
   const viewTabs = document.querySelectorAll('.calendar-view-tab');
   const calendarActivityLog = document.getElementById('calendar-activity-log');
   const btnClearCalendarActivityLog = document.getElementById('btn-clear-calendar-activity-log');
+  const queueSparkline = document.getElementById('calendar-queue-sparkline');
+  const queueCount = document.getElementById('calendar-queue-count');
+  const queueSparkFill = document.getElementById('calendar-queue-spark-fill');
+  const queueSparkPath = document.getElementById('calendar-queue-spark-path');
+  const queueNote = document.getElementById('calendar-queue-note');
   let pollTimer = null;
+  let queuePollTimer = null;
   let viewMode = 'week';
   let anchorDate = null;
   let selectedEventId = null;
@@ -116,6 +125,80 @@
     return Math.max(1, Math.min(365, Math.round(n)));
   }
 
+  function lookbackUnit() {
+    const unit = String(calendarLookbackUnit?.value || 'days').toLowerCase();
+    return unit === 'hours' ? 'hours' : 'days';
+  }
+
+  function lookbackLimits(unit) {
+    if (unit === 'hours') {
+      return { min: 1, max: 8760, defaultValue: 24 };
+    }
+    return { min: 1, max: 365, defaultValue: 5 };
+  }
+
+  function clampLookback(n, unit) {
+    const limits = lookbackLimits(unit);
+    if (!Number.isFinite(n)) return limits.defaultValue;
+    return Math.max(limits.min, Math.min(limits.max, Math.round(n)));
+  }
+
+  function convertLookback(value, fromUnit, toUnit) {
+    const from = fromUnit === 'hours' ? 'hours' : 'days';
+    const to = toUnit === 'hours' ? 'hours' : 'days';
+    if (from === to) return clampLookback(value, to);
+    if (from === 'days' && to === 'hours') {
+      return clampLookback(value * 24, 'hours');
+    }
+    return clampLookback(value / 24, 'days');
+  }
+
+  function scanLookback() {
+    const unit = lookbackUnit();
+    const n = parseInt(
+      calendarLookback?.value || String(lookbackLimits(unit).defaultValue),
+      10
+    );
+    return { value: clampLookback(n, unit), unit };
+  }
+
+  function lookbackLabel(value, unit) {
+    if (unit === 'hours') {
+      return `${value} hour${value === 1 ? '' : 's'}`;
+    }
+    return `${value} day${value === 1 ? '' : 's'}`;
+  }
+
+  function applyLookbackInputLimits(unit) {
+    if (!calendarLookback) return;
+    const limits = lookbackLimits(unit);
+    calendarLookback.min = String(limits.min);
+    calendarLookback.max = String(limits.max);
+  }
+
+  function setLookbackControls(value, unit) {
+    const normalizedUnit = unit === 'hours' ? 'hours' : 'days';
+    const normalizedValue = clampLookback(value, normalizedUnit);
+    applyLookbackInputLimits(normalizedUnit);
+    if (calendarLookbackUnit) calendarLookbackUnit.value = normalizedUnit;
+    if (calendarLookback) calendarLookback.value = String(normalizedValue);
+    return { value: normalizedValue, unit: normalizedUnit };
+  }
+
+  function saveLookback(value, unit) {
+    try {
+      localStorage.setItem(LOOKBACK_KEY, String(value));
+      localStorage.setItem(UNIT_KEY, unit);
+    } catch (_) { /* ignore */ }
+  }
+
+  function listDaysForLookback(lookback) {
+    if (lookback.unit === 'hours') {
+      return Math.max(1, Math.ceil(lookback.value / 24));
+    }
+    return lookback.value;
+  }
+
   function scanDays() {
     const n = parseInt(calendarDays?.value || '5', 10);
     return clampDays(n);
@@ -127,22 +210,32 @@
     } catch (_) { /* ignore */ }
   }
 
-  function saveViewMode(mode) {
-    try {
-      localStorage.setItem(VIEW_KEY, mode);
-    } catch (_) { /* ignore */ }
+  function backfillWindowLabel(bf) {
+    const unit = bf?.unit === 'hours' ? 'hours' : 'days';
+    const value =
+      bf?.lookback ??
+      (unit === 'hours' ? bf?.hours : bf?.days) ??
+      scanLookback().value;
+    return lookbackLabel(value, unit);
   }
 
   function loadSavedPreferences() {
     try {
+      let unit = localStorage.getItem(UNIT_KEY) || 'days';
+      unit = unit === 'hours' ? 'hours' : 'days';
+      let rawLookback = localStorage.getItem(LOOKBACK_KEY);
+      if (rawLookback == null) {
+        rawLookback = localStorage.getItem(DAYS_KEY);
+        unit = 'days';
+      }
+      if (rawLookback != null) {
+        setLookbackControls(parseInt(rawLookback, 10), unit);
+      } else {
+        applyLookbackInputLimits('days');
+      }
       const rawDays = localStorage.getItem(DAYS_KEY);
       if (rawDays != null && calendarDays) {
         calendarDays.value = String(clampDays(parseInt(rawDays, 10)));
-      }
-      const rawView = localStorage.getItem(VIEW_KEY);
-      if (rawView && ['month', 'week', 'day'].includes(rawView)) {
-        viewMode = rawView;
-        setViewMode(viewMode);
       }
     } catch (_) { /* ignore */ }
   }
@@ -356,12 +449,16 @@
     if (!root) return;
     root.querySelectorAll('.calendar-day-event[data-email-id]').forEach((el) => {
       el.addEventListener('click', (ev) => {
-        if (ev.target.closest('.event-votes') || ev.target.closest('.vote-btn')) return;
+        if (
+          ev.target.closest('.event-votes') ||
+          ev.target.closest('.vote-btn') ||
+          ev.target.closest('.event-remove-btn')
+        ) return;
         showSourceEmail(el.dataset.emailId, el.dataset.eventId);
       });
       el.addEventListener('keydown', (ev) => {
         if (ev.key !== 'Enter' && ev.key !== ' ') return;
-        if (ev.target.closest('.vote-btn')) return;
+        if (ev.target.closest('.vote-btn') || ev.target.closest('.event-remove-btn')) return;
         ev.preventDefault();
         showSourceEmail(el.dataset.emailId, el.dataset.eventId);
       });
@@ -407,7 +504,6 @@
     if (!date) return;
     setAnchorFromIso(date);
     setViewMode('day');
-    saveViewMode('day');
     loadCalendar();
   }
 
@@ -480,6 +576,13 @@
     </div>`;
   }
 
+  function buildDayEventActions(ev) {
+    return `<div class="calendar-day-event-actions">
+      ${buildVoteButtons(ev)}
+      <button type="button" class="btn btn-secondary btn-small event-remove-btn" title="Remove this event from the calendar">Remove</button>
+    </div>`;
+  }
+
   function bindVoteButtons(root) {
     if (!root) return;
     root.querySelectorAll('[data-id]').forEach((el) => {
@@ -489,6 +592,19 @@
           ev.stopPropagation();
           voteEvent(el.dataset.id, btn.dataset.vote);
         });
+      });
+    });
+  }
+
+  function bindRemoveButtons(root) {
+    if (!root) return;
+    root.querySelectorAll('[data-id]').forEach((el) => {
+      const btn = el.querySelector('.event-remove-btn');
+      if (!btn) return;
+      btn.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        removeEvent(el.dataset.id);
       });
     });
   }
@@ -508,7 +624,7 @@
           ? ` data-email-id="${escapeHtml(ev.email_id)}" role="button" tabindex="0" title="View source email"`
           : '';
         return `<div class="${eventClasses.join(' ')}" data-event-id="${escapeHtml(ev.id)}" data-id="${escapeHtml(ev.id)}"${eventAttrs}>
-          ${buildVoteButtons(ev)}
+          ${buildDayEventActions(ev)}
           <div class="calendar-day-event-time">${escapeHtml(fmtChipTime(ev.event_start))}</div>
           <div class="calendar-day-event-body">
             <div class="calendar-day-event-title">${escapeHtml(ev.title || 'Event')}</div>
@@ -535,6 +651,7 @@
     bindDayClicks(viewHost);
     if (mode === 'day') {
       bindVoteButtons(viewHost);
+      bindRemoveButtons(viewHost);
       bindEventSourceClicks(viewHost);
     }
     if (selectedEventId && selectedEmailId) {
@@ -588,7 +705,7 @@
     if (!eventList) return;
     if (!events || !events.length) {
       eventList.innerHTML =
-        '<p class="calendar-empty">No events found yet. Use <strong>Check for Events</strong> on stored mail, or <a href="/process">Process</a> to import more.</p>';
+        '<p class="calendar-empty">No events found yet. Use <strong>Re-process</strong> on stored mail, or <a href="/pipelines">Pipelines</a> to import more.</p>';
       return;
     }
     eventList.innerHTML = events
@@ -626,6 +743,60 @@
     }
   }
 
+  function renderQueueSparkline(queue) {
+    if (!queueSparkline || !queue) return;
+    const pending = Number(queue.pending) || 0;
+    if (queueCount) queueCount.textContent = String(pending);
+
+    const history = Array.isArray(queue.history) ? queue.history : [];
+    const values = history.map((point) => Number(point.pending) || 0);
+    if (!values.length) values.push(pending);
+
+    const width = 120;
+    const height = 28;
+    const pad = 2;
+    const max = Math.max(...values, 1);
+    const min = Math.min(...values, 0);
+    const range = Math.max(max - min, 1);
+    const points = values.map((value, index) => {
+      const x = pad + (index / Math.max(values.length - 1, 1)) * (width - pad * 2);
+      const y = pad + (1 - (value - min) / range) * (height - pad * 2);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    });
+    const linePath = `M ${points.join(' L ')}`;
+    const fillPath = `${linePath} L ${width - pad},${height - pad} L ${pad},${height - pad} Z`;
+    if (queueSparkPath) queueSparkPath.setAttribute('d', linePath);
+    if (queueSparkFill) queueSparkFill.setAttribute('d', fillPath);
+
+    queueSparkline.classList.toggle('is-high', pending >= 25);
+    queueSparkline.classList.toggle('is-clear', pending === 0);
+
+    if (!queueNote) return;
+    const notes = [];
+    const days = queue.list_days || scanDays();
+    notes.push(`last ${days} day${days === 1 ? '' : 's'} of stored mail`);
+    if (queue.calendar_scan_running && queue.scan_total > 0) {
+      notes.push(`scanning ${queue.scan_done || 0}/${queue.scan_total}`);
+    } else if (queue.blocked_by_summary && queue.summary_pending > 0) {
+      notes.push(`LLM deferred — ${queue.summary_pending} summaries pending`);
+    } else if (pending === 0 && (queue.scanned_no_events || 0) > 0) {
+      notes.push(`idle — ${queue.scanned_no_events} scanned with no dates`);
+    } else if (pending === 0 && !queue.calendar_scan_running) {
+      notes.push('idle — queue clear');
+    }
+    queueNote.textContent = notes.join(' · ');
+  }
+
+  async function loadQueueStats() {
+    const days = scanDays();
+    try {
+      const res = await fetch(`/api/calendar/queue?list_days=${encodeURIComponent(days)}`);
+      const data = await res.json();
+      if (!data.ok) return;
+      renderQueueSparkline(data.queue);
+    } catch (_) { /* ignore */ }
+  }
+
   function renderStatus(data) {
     if (!calendarStatus) return;
     const parts = [];
@@ -633,22 +804,22 @@
       parts.push('Demo mode — sample calendar events (Check for Events disabled)');
     }
     const bf = data.backfill || {};
-    const days = bf.days || data.list_days || scanDays();
+    const windowLabel = backfillWindowLabel(bf);
     const providerNote = formatProviderCounts(bf.by_provider);
     if (bf.running) {
       if (bf.phase === 'import') {
-        parts.push(`Importing mail from all inboxes (last ${days} days)…`);
+        parts.push(`Importing mail from all inboxes (last ${windowLabel})…`);
       } else {
-        const verb = bf.force ? 'Checking' : 'Processing';
+        const verb = bf.force ? 'Reprocessing' : 'Processing';
         const parallel = data.extract_concurrency || 1;
-        let line = `${verb} stored mail ${bf.done || 0} / ${bf.total || 0} (last ${days} days, ${parallel} parallel)`;
+        let line = `${verb} stored mail ${bf.done || 0} / ${bf.total || 0} (last ${windowLabel}, ${parallel} parallel)`;
         if (providerNote) line += ` — ${providerNote}`;
         parts.push(`${line}…`);
       }
     } else if ((bf.total || 0) > 0 && (bf.done || 0) >= (bf.total || 0)) {
-      const verb = bf.force ? 'Checked' : 'Processed';
+      const verb = bf.force ? 'Reprocessed' : 'Processed';
       const parallel = data.extract_concurrency || 1;
-      let line = `${verb} ${bf.total} stored emails (last ${days} days, ${parallel} parallel)`;
+      let line = `${verb} ${bf.total} stored emails (last ${windowLabel}, ${parallel} parallel)`;
       if (providerNote) line += ` — ${providerNote}`;
       parts.push(line);
     }
@@ -659,8 +830,31 @@
     }
   }
 
+  function setClearBusy(busy, demoMode) {
+    if (btnClearQueue) btnClearQueue.disabled = busy || !!demoMode;
+    if (calendarLookback) calendarLookback.disabled = busy || !!demoMode;
+    if (calendarLookbackUnit) calendarLookbackUnit.disabled = busy || !!demoMode;
+  }
+
+  function setReprocessBusy(busy, demoMode) {
+    if (btnReprocess) btnReprocess.disabled = busy || !!demoMode;
+  }
+
   function setScanBusy(busy, demoMode) {
-    if (btnProcess) btnProcess.disabled = busy || !!demoMode;
+    setClearBusy(busy, demoMode);
+    setReprocessBusy(busy, demoMode);
+  }
+
+  function queueClearResultMessage(cleared, windowText, pendingInWindow, pendingRemaining) {
+    const doneText =
+      cleared > 0
+        ? `Queue emptied — ${cleared} email${cleared === 1 ? '' : 's'} skipped (last ${windowText})`
+        : `Queue already empty for the last ${windowText}`;
+    const backlogText =
+      pendingInWindow === 0
+        ? 'backlog clear in that window'
+        : `${pendingInWindow} still pending in that window`;
+    return `${doneText} · ${backlogText} · ${pendingRemaining} overall`;
   }
 
   async function loadCalendar() {
@@ -680,12 +874,19 @@
       renderConnectedInboxes(data.mail_accounts);
       renderEventList(data.events);
       renderStatus(data);
-      if (data.backfill?.running) {
-        setScanBusy(true, data.demo_mode);
-        schedulePoll();
+      renderQueueSparkline(data.queue);
+      if (data.demo_mode) {
+        setClearBusy(true, true);
+        setReprocessBusy(true, true);
       } else {
-        setScanBusy(false, data.demo_mode);
-        clearPoll();
+        setClearBusy(false, false);
+        if (data.backfill?.running) {
+          setReprocessBusy(true, false);
+          schedulePoll();
+        } else {
+          setReprocessBusy(false, false);
+          clearPoll();
+        }
       }
     } catch (e) {
       setScanBusy(false, false);
@@ -715,25 +916,86 @@
     }
   }
 
-  async function checkForEvents() {
-    const days = scanDays();
-    saveScanDays(days);
-    setScanBusy(true, false);
-    if (calendarStatus) {
-      calendarStatus.textContent = `Checking stored mail for events (last ${days} days)…`;
-    }
+  async function removeEvent(eventId) {
+    if (!eventId) return;
     try {
-      const res = await fetch('/api/calendar/backfill', {
+      const res = await fetch(`/api/calendar/events/${encodeURIComponent(eventId)}/remove`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ days, force: true, import_from_source: false, list_days: days }),
       });
       const data = await res.json();
-      if (!data.ok) throw new Error(data.error || 'Check failed');
+      if (!res.ok || !data.ok) throw new Error(data.error || 'Remove failed');
+      if (selectedEventId === eventId) closeSourceEmail();
       await loadCalendar();
     } catch (e) {
-      if (calendarStatus) calendarStatus.textContent = `Check error: ${e}`;
-      setScanBusy(false, false);
+      if (calendarStatus) calendarStatus.textContent = `Remove error: ${e}`;
+    }
+  }
+
+  function calendarLookbackPayload() {
+    const lookback = scanLookback();
+    setLookbackControls(lookback.value, lookback.unit);
+    saveLookback(lookback.value, lookback.unit);
+    return {
+      windowText: lookbackLabel(lookback.value, lookback.unit),
+      body: {
+        lookback: lookback.value,
+        unit: lookback.unit,
+        list_days: listDaysForLookback(lookback),
+      },
+    };
+  }
+
+  async function clearCalendarQueue() {
+    const { windowText, body } = calendarLookbackPayload();
+    setClearBusy(true, false);
+    if (calendarStatus) {
+      calendarStatus.textContent = `Emptying calendar queue (last ${windowText})…`;
+    }
+    try {
+      const res = await fetch('/api/calendar/queue/clear', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || 'Clear queue failed');
+      const cleared = Number(data.cleared) || 0;
+      const pendingRemaining = Number(data.pending_remaining) ?? Number(data.queue?.pending) ?? 0;
+      const pendingInWindow = Number(data.pending_in_window) || 0;
+      await loadCalendar();
+      if (calendarStatus) {
+        calendarStatus.textContent = queueClearResultMessage(
+          cleared,
+          windowText,
+          pendingInWindow,
+          pendingRemaining
+        );
+      }
+    } catch (e) {
+      if (calendarStatus) calendarStatus.textContent = `Clear queue error: ${e}`;
+    } finally {
+      setClearBusy(false, false);
+    }
+  }
+
+  async function reprocessCalendar() {
+    const { windowText, body } = calendarLookbackPayload();
+    setReprocessBusy(true, false);
+    if (calendarStatus) {
+      calendarStatus.textContent = `Re-processing calendar queue (last ${windowText})…`;
+    }
+    try {
+      const res = await fetch('/api/calendar/reprocess', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'Reprocess failed');
+      await loadCalendar();
+    } catch (e) {
+      if (calendarStatus) calendarStatus.textContent = `Re-process error: ${e}`;
+      setReprocessBusy(false, false);
     }
   }
 
@@ -757,12 +1019,23 @@
     }
   }
 
+  function scheduleQueuePoll() {
+    if (queuePollTimer) return;
+    queuePollTimer = window.setInterval(() => loadQueueStats(), 8000);
+  }
+
+  function clearQueuePoll() {
+    if (queuePollTimer) {
+      window.clearInterval(queuePollTimer);
+      queuePollTimer = null;
+    }
+  }
+
   viewTabs.forEach((tab) => {
     tab.addEventListener('click', () => {
       const mode = tab.dataset.view;
       if (!mode || mode === viewMode) return;
       setViewMode(mode);
-      saveViewMode(mode);
       loadCalendar();
     });
   });
@@ -783,7 +1056,30 @@
   btnCalNext?.addEventListener('click', () => navigateNext());
   btnCalToday?.addEventListener('click', () => goToday());
   btnRefresh?.addEventListener('click', () => loadCalendar());
-  btnProcess?.addEventListener('click', () => checkForEvents());
+  calendarLookback?.addEventListener('change', () => {
+    const lookback = scanLookback();
+    setLookbackControls(lookback.value, lookback.unit);
+    saveLookback(lookback.value, lookback.unit);
+  });
+  calendarLookbackUnit?.addEventListener('change', () => {
+    const nextUnit = lookbackUnit();
+    const currentValue = parseInt(calendarLookback?.value || '5', 10);
+    const converted = convertLookback(
+      currentValue,
+      nextUnit === 'hours' ? 'days' : 'hours',
+      nextUnit
+    );
+    const lookback = setLookbackControls(converted, nextUnit);
+    saveLookback(lookback.value, lookback.unit);
+  });
+  calendarLookback?.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter' && !btnReprocess?.disabled) {
+      ev.preventDefault();
+      reprocessCalendar();
+    }
+  });
+  btnClearQueue?.addEventListener('click', () => clearCalendarQueue());
+  btnReprocess?.addEventListener('click', () => reprocessCalendar());
   btnClearCalendarActivityLog?.addEventListener('click', async () => {
     try {
       await fetch('/api/logs/clear', { method: 'POST' });
@@ -793,5 +1089,11 @@
 
   connectActivityStream();
   loadSavedPreferences();
+  setViewMode('week');
+  scheduleQueuePoll();
   loadCalendar();
+  window.addEventListener('beforeunload', () => {
+    clearPoll();
+    clearQueuePoll();
+  });
 })();

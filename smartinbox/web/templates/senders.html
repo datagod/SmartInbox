@@ -4,12 +4,16 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SmartInbox — Senders</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=5">
+  <link rel="icon" href="/static/img/smartinbox-icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/css/styles.css?v=23">
 </head>
 <body>
   <div class="set-app senders-app">
     <header class="header">
-      <h1>SmartInbox</h1>
+      <h1 class="brand-title">
+        <img src="/static/img/smartinbox-icon.svg" alt="" class="brand-icon" width="32" height="32">
+        SmartInbox
+      </h1>
       <p class="subtitle">Sender rankings from inbox votes</p>
       <nav class="site-nav" aria-label="Site">
         <a href="/">Inbox</a>
@@ -19,7 +23,7 @@
         <a href="/phrases">Phrases</a>
         <a href="/senders" aria-current="page">Senders</a>
         <a href="/calendar">Calendar</a>
-        <a href="/process">Process</a>
+        <a href="/pipelines">Pipelines</a>
         <a href="/storage">Storage</a>
       </nav>
     </header>
@@ -75,6 +79,7 @@
       </div>
     </section>
   </div>
+  <script src="/static/js/alerts.js?v=1"></script>
   <script src="/static/js/senders.js?v=1"></script>
 </body>
 </html>

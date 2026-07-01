@@ -17,6 +17,7 @@ Rules:
 - Include only real appointments, deadlines, deliveries, meetings, reservations, or dated actions.
 - Use the reference date and timezone to resolve relative phrases (tomorrow, next Friday, this Monday).
 - Pay special attention to explicit lines like "Date: 2026-06-26 7:00pm" or "add this date to your calendar".
+- Include webinar and Zoom invites (e.g. "join us on June 27, 2026 at 10:00 AM Pacific Time").
 - Put destination phrases such as "Go to Perth" in location when present.
 - If no date/time is mentioned, omit the event.
 - If time is missing, use 09:00 local on that day.
@@ -145,12 +146,39 @@ def build_calendar_ollama_options(*, main_gpu: int | None = None) -> dict[str, A
     return opts
 
 
+async def list_loaded_ollama_models(
+    base_url: str, *, timeout: float = 8.0
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Models currently loaded in Ollama VRAM (/api/ps)."""
+    url = f"{base_url.rstrip('/')}/api/ps"
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            data = resp.json()
+    except httpx.TimeoutException:
+        return [], f"Ollama timed out after {timeout:.0f}s"
+    except httpx.HTTPStatusError as e:
+        return [], f"Ollama HTTP {e.response.status_code}: {e.response.text[:300]}"
+    except httpx.RequestError as e:
+        return [], f"Ollama request error: {e}"
+    models = [
+        {
+            "name": str(m.get("name") or m.get("model") or ""),
+            "size_vram": int(m.get("size_vram") or 0),
+        }
+        for m in data.get("models", [])
+        if m.get("name") or m.get("model")
+    ]
+    return models, None
+
+
 async def preload_ollama_model(
     *,
     base_url: str,
     model: str,
     options: dict[str, Any] | None = None,
-    keep_alive: str = "30m",
+    keep_alive: str | int = "30m",
     timeout: float = 120.0,
 ) -> str | None:
     """Load a model into Ollama memory. Returns an error string or None on success."""
@@ -192,7 +220,7 @@ async def extract_calendar_events(
     system_prompt: str | None = None,
     timeout: float = 120.0,
     ollama_options: dict[str, Any] | None = None,
-    keep_alive: str = "30m",
+    keep_alive: str | int = "30m",
 ) -> tuple[list[dict[str, Any]], str | None]:
     """Call Ollama and return (events, error)."""
     from zoneinfo import ZoneInfo

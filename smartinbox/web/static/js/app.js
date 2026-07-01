@@ -16,35 +16,37 @@
   const THEME_KEY = 'smartinbox.summaryTheme';
   const INBOX_HIDDEN_KEY = 'smartinbox-inbox-hidden';
   const VOLUME_KEY = 'smartinbox-alert-volume';
-  const THEMES = [
-    'modern',
-    'ansi',
-    'arcade',
-    'phosphor',
-    'amber',
-    'typewriter',
-    'teleprinter',
-    'dotmatrix',
-    'newsprint',
-    'solarized',
-    'blueprint',
-    'mainframe',
-    'pdp11',
-    'mailcraft',
-    'mailtrek',
-    'weylandyutani',
-    'reddwarf',
-    'empire',
-    'kawaiimail',
-    'nasa70s',
-    'pacmail',
-    'lsmail',
-    'c64',
-    'macintosh',
-    'dune1984',
-    'logansrun',
-    'computer50s',
-  ];
+  const THEME_OPTIONS = [
+    { value: 'mainframe', label: '1970s mainframe' },
+    { value: 'dotmatrix', label: '80s dot matrix printer' },
+    { value: 'amber', label: 'Amber terminal' },
+    { value: 'ansi', label: 'ANSI color terminal' },
+    { value: 'blueprint', label: 'Blueprint' },
+    { value: 'c64', label: 'Commodore 64' },
+    { value: 'dune1984', label: 'Dune 1984' },
+    { value: 'computer50s', label: 'Early 1950s computer' },
+    { value: 'empire', label: 'Galactic Empire' },
+    { value: 'phosphor', label: 'Green phosphor CRT' },
+    { value: 'kawaiimail', label: 'Kawaii Mail' },
+    { value: 'lsmail', label: 'Leisure Suit Mailman' },
+    { value: 'teleprinter', label: 'Line printer' },
+    { value: 'logansrun', label: "Logan's Run" },
+    { value: 'macintosh', label: 'Macintosh' },
+    { value: 'mailtrek', label: 'Mail Trek (LCARS)' },
+    { value: 'mailcraft', label: 'MailCraft' },
+    { value: 'modern', label: 'Modern display' },
+    { value: 'nasa70s', label: 'NASA Mission Control' },
+    { value: 'newsprint', label: 'Newsprint' },
+    { value: 'pacmail', label: 'PacMail' },
+    { value: 'pdp11', label: 'PDP-11 terminal' },
+    { value: 'reddwarf', label: 'Red Dwarf' },
+    { value: 'arcade', label: 'Retro arcade CRT' },
+    { value: 'solarized', label: 'Solarized' },
+    { value: 'tripleplanets', label: 'Triple Planets' },
+    { value: 'typewriter', label: 'Typewriter' },
+    { value: 'weylandyutani', label: 'Weyland-Yutani Corp' },
+  ].sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
+  const THEMES = THEME_OPTIONS.map((t) => t.value);
 
   let emails = [];
   let demoMode = false;
@@ -53,9 +55,7 @@
   let summaryViewMode = 'summary';
   let importantKeys = new Set();
   let senderInterest = {};
-  const audioQueue = [];
-  let playing = false;
-  let currentAlertAudio = null;
+
 
   function clampVolume(value) {
     const n = Number(value);
@@ -77,8 +77,8 @@
     if (volumeSlider) {
       volumeSlider.value = String(Math.round(alertVolume * 100));
     }
-    if (currentAlertAudio) {
-      currentAlertAudio.volume = alertVolume;
+    if (window.smartinboxSetAlertVolume) {
+      window.smartinboxSetAlertVolume(alertVolume);
     }
   }
 
@@ -503,6 +503,14 @@
     });
   }
 
+  function populateThemeSelect() {
+    if (!summaryTheme) return;
+    summaryTheme.innerHTML = THEME_OPTIONS.map(
+      ({ value, label }) =>
+        `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`
+    ).join('');
+  }
+
   function applySummaryTheme(theme) {
     if (theme === 'minecraft') theme = 'mailcraft';
     const chosen = THEMES.includes(theme) ? theme : 'modern';
@@ -579,36 +587,6 @@
     }
   }
 
-  function enqueueAlert(alert) {
-    if (!alert || !alert.recording) return;
-    audioQueue.push(`/api/recordings/${encodeURIComponent(alert.recording)}`);
-    drainQueue();
-  }
-
-  function drainQueue() {
-    if (playing || !audioQueue.length) return;
-    playing = true;
-    const url = audioQueue.shift();
-    const audio = new Audio(url);
-    audio.volume = alertVolume;
-    currentAlertAudio = audio;
-    audio.onended = () => {
-      currentAlertAudio = null;
-      playing = false;
-      drainQueue();
-    };
-    audio.onerror = () => {
-      currentAlertAudio = null;
-      playing = false;
-      drainQueue();
-    };
-    audio.play().catch(() => {
-      currentAlertAudio = null;
-      playing = false;
-      drainQueue();
-    });
-  }
-
   function applySnapshot(snap) {
     demoMode = !!snap.demo_mode;
     emails = sortEmailsForInbox(snap.emails || []);
@@ -664,9 +642,7 @@
           senderInterest = msg.data || {};
           renderInbox();
         }
-        if (msg.type === 'email_alerts') {
-          (msg.data || []).forEach(enqueueAlert);
-        }
+
       } catch (_) { /* ignore */ }
     };
     es.onerror = () => {
@@ -762,6 +738,7 @@
   });
 
   if (summaryTheme) {
+    populateThemeSelect();
     let savedTheme = 'modern';
     try {
       savedTheme = localStorage.getItem(THEME_KEY) || 'modern';

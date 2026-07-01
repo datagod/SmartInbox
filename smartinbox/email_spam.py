@@ -25,13 +25,18 @@ def default_spam_system_prompt() -> str:
 
 
 def build_spam_ollama_options(*, main_gpu: int | None = None) -> dict[str, Any]:
-    """Ollama runtime options for spam checks — tiny output, fast turnaround."""
+    """Ollama runtime options for spam checks — tiny output, fast turnaround.
+
+    Spam runs on CPU (num_gpu=0) so a large summary model can stay resident in GPU
+    VRAM without llama-server crashing on dual load.
+    """
     opts: dict[str, Any] = {
         "num_predict": 48,
         "temperature": 0,
-        "num_gpu": -1,
+        "num_gpu": 0,
     }
-    if main_gpu is not None:
+    if main_gpu is not None and main_gpu >= 0:
+        opts["num_gpu"] = -1
         opts["main_gpu"] = int(main_gpu)
     return opts
 
@@ -93,6 +98,7 @@ async def classify_email_spam(
     system_prompt: str | None = None,
     ollama_options: dict[str, Any] | None = None,
     timeout: float = 60.0,
+    keep_alive: str | int = -1,
 ) -> tuple[bool | None, str | None]:
     """Ask Ollama if email looks spammy. Returns (is_spam, error)."""
     url = f"{base_url.rstrip('/')}/api/chat"
@@ -112,6 +118,7 @@ async def classify_email_spam(
             },
         ],
         "stream": False,
+        "keep_alive": keep_alive,
         "options": ollama_options or build_spam_ollama_options(),
     }
     try:

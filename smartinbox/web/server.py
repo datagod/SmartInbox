@@ -10,7 +10,14 @@ from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.templating import Jinja2Templates
-from starlette.responses import HTMLResponse, JSONResponse, Response, StreamingResponse
+from starlette.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
 from starlette.staticfiles import StaticFiles
 
 from smartinbox import __version__
@@ -117,8 +124,15 @@ def create_app(core: SmartInboxCore) -> FastAPI:
     app.state.broadcaster = broadcaster
 
     static_dir = WEB_DIR / "static"
+    icon_path = static_dir / "img" / "smartinbox-icon.svg"
     if static_dir.is_dir():
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    async def favicon():
+        if icon_path.is_file():
+            return FileResponse(icon_path, media_type="image/svg+xml")
+        return Response(status_code=404)
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request):
@@ -156,11 +170,15 @@ def create_app(core: SmartInboxCore) -> FastAPI:
             request, "calendar.html", {"version": __version__}
         )
 
-    @app.get("/process", response_class=HTMLResponse)
-    async def process_page(request: Request):
+    @app.get("/pipelines", response_class=HTMLResponse)
+    async def pipelines_page(request: Request):
         return TEMPLATES.TemplateResponse(
-            request, "process.html", {"version": __version__}
+            request, "pipelines.html", {"version": __version__}
         )
+
+    @app.get("/process")
+    async def process_page_redirect():
+        return RedirectResponse(url="/pipelines", status_code=301)
 
     @app.get("/storage", response_class=HTMLResponse)
     async def storage_page(request: Request):
@@ -495,6 +513,15 @@ def create_app(core: SmartInboxCore) -> FastAPI:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=404)
         return JSONResponse({"ok": True, **result})
 
+    @app.get("/api/calendar/queue")
+    async def api_calendar_queue(request: Request):
+        try:
+            list_days = int(request.query_params.get("list_days", "30"))
+        except (TypeError, ValueError):
+            list_days = 30
+        queue = core.get_calendar_queue_stats(list_days=list_days)
+        return JSONResponse({"ok": True, "queue": queue})
+
     @app.get("/api/calendar")
     async def api_calendar(request: Request):
         try:
@@ -510,25 +537,45 @@ def create_app(core: SmartInboxCore) -> FastAPI:
         )
         return JSONResponse({"ok": True, **view})
 
+    def _parse_calendar_lookback(body: dict[str, Any]) -> tuple[int | None, int | None, int]:
+        unit = str(body.get("unit") or "days").strip().lower()
+        if body.get("hours") is not None:
+            try:
+                hours = int(body.get("hours"))
+            except (TypeError, ValueError):
+                hours = 24
+            list_days = max(1, min(365, (hours + 23) // 24))
+            return None, hours, list_days
+        raw = body.get("lookback", body.get("days", 5))
+        try:
+            lookback = int(raw)
+        except (TypeError, ValueError):
+            lookback = 5
+        if unit == "hours":
+            list_days = max(1, min(365, (lookback + 23) // 24))
+            return None, lookback, list_days
+        list_days = max(1, min(365, lookback))
+        return lookback, None, list_days
+
     @app.post("/api/calendar/backfill")
     async def api_calendar_backfill(request: Request):
         try:
             body = await request.json()
         except Exception:
             body = {}
-        try:
-            days = int(body.get("days", 5))
-        except (TypeError, ValueError):
-            days = 5
+        days, hours, default_list_days = _parse_calendar_lookback(body)
         force = bool(body.get("force", False))
         import_from_source = bool(body.get("import_from_source", False))
         started = core.start_calendar_backfill(
-            days=days, force=force, import_from_source=import_from_source
+            days=days,
+            hours=hours,
+            force=force,
+            import_from_source=import_from_source,
         )
         try:
-            list_days = int(body.get("list_days", days))
+            list_days = int(body.get("list_days", default_list_days))
         except (TypeError, ValueError):
-            list_days = days
+            list_days = default_list_days
         view = core.get_calendar_view(list_days=list_days)
         if not started and not core.get_demo_mode():
             if core.calendar_scan_running():
@@ -541,6 +588,193 @@ def create_app(core: SmartInboxCore) -> FastAPI:
                     status_code=409,
                 )
         return JSONResponse({"ok": True, "started": started, **view})
+
+    @app.post("/api/calendar/queue/clear")
+    async def api_calendar_queue_clear(request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if core.get_demo_mode():
+            return JSONResponse(
+                {"ok": False, "error": "Demo mode — calendar queue clear disabled"},
+                status_code=400,
+            )
+        days, hours, default_list_days = _parse_calendar_lookback(body)
+        result = core.clear_calendar_queue(days=days, hours=hours)
+        try:
+            list_days = int(body.get("list_days", default_list_days))
+        except (TypeError, ValueError):
+            list_days = default_list_days
+        view = core.get_calendar_view(list_days=list_days)
+        process_view = core.get_process_view()
+        return JSONResponse(
+            {
+                "ok": True,
+                **result,
+                **view,
+                "pipeline": process_view.get("pipeline") or {},
+                "logs": process_view.get("logs") or [],
+            }
+        )
+
+    @app.post("/api/calendar/reprocess")
+    async def api_calendar_reprocess(request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        days, hours, default_list_days = _parse_calendar_lookback(body)
+        started = core.start_calendar_reprocess(days=days, hours=hours)
+        try:
+            list_days = int(body.get("list_days", default_list_days))
+        except (TypeError, ValueError):
+            list_days = default_list_days
+        view = core.get_calendar_view(list_days=list_days)
+        if not started and not core.get_demo_mode():
+            if core.calendar_scan_running():
+                return JSONResponse(
+                    {
+                        "ok": False,
+                        "error": "A calendar scan is already running",
+                        **view,
+                    },
+                    status_code=409,
+                )
+        return JSONResponse(
+            {
+                "ok": True,
+                "started": started,
+                **view,
+                "logs": core.get_process_view().get("logs") or [],
+            }
+        )
+
+    @app.post("/api/summary/queue/clear")
+    async def api_summary_queue_clear(request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if core.get_demo_mode():
+            return JSONResponse(
+                {"ok": False, "error": "Demo mode — summary queue clear disabled"},
+                status_code=400,
+            )
+        days, hours, _default_list_days = _parse_calendar_lookback(body)
+        result = core.clear_summary_queue(days=days, hours=hours)
+        view = core.get_process_view()
+        return JSONResponse(
+            {
+                "ok": True,
+                **result,
+                "pipeline": view.get("pipeline") or {},
+                "logs": view.get("logs") or [],
+            }
+        )
+
+    @app.post("/api/pipelines/kickstart")
+    async def api_pipelines_kickstart(request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if core.get_demo_mode():
+            return JSONResponse(
+                {"ok": False, "error": "Demo mode — pipeline kickstart disabled"},
+                status_code=400,
+            )
+        try:
+            calendar_days = int(body.get("calendar_days", 30))
+        except (TypeError, ValueError):
+            calendar_days = 30
+        calendar_days = max(1, min(calendar_days, 365))
+        result = await core.kickstart_pipelines(calendar_days=calendar_days)
+        view = core.get_process_view()
+        return JSONResponse(
+            {
+                "ok": True,
+                **result,
+                "pipeline": view.get("pipeline") or {},
+                "logs": view.get("logs") or [],
+            }
+        )
+
+    @app.post("/api/pipelines/tts-investigate")
+    async def api_pipelines_tts_investigate(request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        test_synthesis = body.get("test_synthesis", True)
+        if isinstance(test_synthesis, str):
+            test_synthesis = test_synthesis.strip().lower() not in ("0", "false", "no")
+        else:
+            test_synthesis = bool(test_synthesis)
+        result = await core.investigate_tts(test_synthesis=test_synthesis)
+        view = core.get_process_view()
+        return JSONResponse(
+            {
+                "ok": True,
+                **result,
+                "logs": view.get("logs") or [],
+            }
+        )
+
+    @app.post("/api/pipelines/tts-restart")
+    async def api_pipelines_tts_restart(request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        verify = body.get("verify", True)
+        if isinstance(verify, str):
+            verify = verify.strip().lower() not in ("0", "false", "no")
+        else:
+            verify = bool(verify)
+        result = await core.restart_chatterbox_tts(verify=verify)
+        view = core.get_process_view()
+        status = 200 if result.get("ok") else 400
+        return JSONResponse(
+            {
+                **result,
+                "logs": view.get("logs") or [],
+            },
+            status_code=status,
+        )
+
+    @app.post("/api/summary/reprocess")
+    async def api_summary_reprocess(request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if core.get_demo_mode():
+            return JSONResponse(
+                {"ok": False, "error": "Demo mode — summary reprocess disabled"},
+                status_code=400,
+            )
+        days, hours, _default_list_days = _parse_calendar_lookback(body)
+        started = core.start_summary_reprocess(days=days, hours=hours)
+        view = core.get_process_view()
+        if not started and not core.get_demo_mode():
+            if core.summary_backfill_running():
+                return JSONResponse(
+                    {
+                        "ok": False,
+                        "error": "A summary backfill is already running",
+                        "pipeline": view.get("pipeline") or {},
+                    },
+                    status_code=409,
+                )
+        return JSONResponse(
+            {
+                "ok": True,
+                "started": started,
+                "pipeline": view.get("pipeline") or {},
+                "logs": view.get("logs") or [],
+            }
+        )
 
     @app.post("/api/calendar/events/{event_id}/vote")
     async def api_calendar_event_vote(event_id: str, request: Request):
@@ -558,6 +792,13 @@ def create_app(core: SmartInboxCore) -> FastAPI:
             result = core.vote_calendar_event(event_id, vote=vote)
         except ValueError as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+        if result is None:
+            return JSONResponse({"ok": False, "error": "event not found"}, status_code=404)
+        return JSONResponse({"ok": True, **result})
+
+    @app.post("/api/calendar/events/{event_id}/remove")
+    async def api_calendar_event_remove(event_id: str):
+        result = core.remove_calendar_event(event_id)
         if result is None:
             return JSONResponse({"ok": False, "error": "event not found"}, status_code=404)
         return JSONResponse({"ok": True, **result})

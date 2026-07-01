@@ -4,14 +4,18 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SmartInbox — Calendar</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=16">
+  <link rel="icon" href="/static/img/smartinbox-icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/css/styles.css?v=23">
 </head>
 <body>
   <div class="set-app calendar-app">
     <div class="set-layout">
       <div class="set-main">
         <header class="header">
-          <h1>SmartInbox</h1>
+          <h1 class="brand-title">
+            <img src="/static/img/smartinbox-icon.svg" alt="" class="brand-icon" width="32" height="32">
+            SmartInbox
+          </h1>
           <p class="subtitle">Calendar — key dates from your mail</p>
           <nav class="site-nav" aria-label="Site">
             <a href="/">Inbox</a>
@@ -21,7 +25,7 @@
             <a href="/phrases">Phrases</a>
             <a href="/senders">Senders</a>
             <a href="/calendar" aria-current="page">Calendar</a>
-            <a href="/process">Process</a>
+            <a href="/pipelines">Pipelines</a>
             <a href="/storage">Storage</a>
           </nav>
         </header>
@@ -30,26 +34,68 @@
           <div class="calendar-week-header">
             <div>
               <p class="set-hint">
-                <strong>Check for Events</strong> scans mail already stored locally for the lookback window and
-                extracts dates with Ollama. Use <a href="/process">Process</a> to import new mail from your inboxes.
-                Parallel extractions are set in <a href="/settings">Settings</a>. Downvoted events are hidden from calendar views.
+                <strong>Clear queue</strong> stops calendar backfill and empties the extraction queue for
+                stored mail in the lookback window. <strong>Re-process</strong> resets extraction and runs
+                date extraction again. Use
+                <a href="/pipelines">Pipelines</a> to import new mail. Parallel extractions are set in
+                <a href="/settings">Settings</a>. Downvoted events are hidden from calendar views.
               </p>
               <p class="calendar-inboxes" id="calendar-inboxes"></p>
             </div>
             <div class="calendar-actions">
-              <button type="button" class="btn btn-primary" id="btn-process-calendar">Check for Events</button>
+              <div class="process-lookback-field calendar-lookback-field">
+                <span class="process-lookback-label">Last</span>
+                <input
+                  type="number"
+                  class="set-input process-lookback-input calendar-lookback-input"
+                  id="calendar-lookback"
+                  name="calendar-lookback"
+                  value="5"
+                  min="1"
+                  max="365"
+                  step="1"
+                  inputmode="numeric"
+                  aria-label="Calendar lookback amount"
+                >
+                <select class="set-input process-lookback-unit calendar-lookback-unit" id="calendar-lookback-unit" aria-label="Calendar lookback unit">
+                  <option value="days" selected>days</option>
+                  <option value="hours">hours</option>
+                </select>
+              </div>
+              <button type="button" class="btn btn-primary" id="btn-calendar-clear-queue">Clear queue</button>
+              <button type="button" class="btn btn-primary" id="btn-calendar-reprocess">Re-process</button>
               <button type="button" class="btn btn-secondary" id="btn-refresh-calendar">Refresh view</button>
             </div>
           </div>
           <div class="calendar-toolbar">
+            <div
+              class="calendar-queue-sparkline"
+              id="calendar-queue-sparkline"
+              title="Stored mail in the lookback window still awaiting calendar extraction"
+            >
+              <div class="calendar-queue-sparkline-head">
+                <span class="calendar-queue-sparkline-label">Calendar queue</span>
+                <span class="calendar-queue-sparkline-value" id="calendar-queue-count">—</span>
+              </div>
+              <svg
+                class="calendar-queue-sparkline-chart"
+                viewBox="0 0 120 28"
+                preserveAspectRatio="none"
+                aria-hidden="true"
+              >
+                <path class="calendar-queue-spark-fill" id="calendar-queue-spark-fill" d=""></path>
+                <path class="calendar-queue-spark-path" id="calendar-queue-spark-path" d=""></path>
+              </svg>
+              <p class="calendar-queue-sparkline-note" id="calendar-queue-note"></p>
+            </div>
             <div class="calendar-view-tabs" role="tablist" aria-label="Calendar view">
               <button type="button" class="calendar-view-tab" data-view="month" role="tab" aria-selected="false">Month</button>
               <button type="button" class="calendar-view-tab is-active" data-view="week" role="tab" aria-selected="true">Week</button>
               <button type="button" class="calendar-view-tab" data-view="day" role="tab" aria-selected="false">Day</button>
             </div>
-            <label class="calendar-days-field" title="How far back to scan stored mail and list key events">
-              <span>Go back</span>
-              <input type="text" inputmode="numeric" pattern="[0-9]*" class="set-input calendar-days-input" id="calendar-days" value="5" aria-label="Days of mail to scan" autocomplete="off" spellcheck="false">
+            <label class="calendar-days-field" title="How far back to list key events in the calendar view">
+              <span>List events</span>
+              <input type="text" inputmode="numeric" pattern="[0-9]*" class="set-input calendar-days-input" id="calendar-days" value="5" aria-label="Days of events to list" autocomplete="off" spellcheck="false">
               <span>days</span>
             </label>
           </div>
@@ -110,7 +156,8 @@
       </div>
     </div>
   </div>
+  <script src="/static/js/alerts.js?v=1"></script>
   <script src="/static/js/activity-log-resize.js?v=4"></script>
-  <script src="/static/js/calendar.js?v=10"></script>
+  <script src="/static/js/calendar.js?v=16"></script>
 </body>
 </html>

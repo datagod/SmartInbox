@@ -204,6 +204,16 @@ def list_emails(conn: sqlite3.Connection, *, limit: int = 50) -> list[dict[str, 
     return [dict(r) for r in rows]
 
 
+def count_unsummarized_emails(conn: sqlite3.Connection) -> int:
+    row = conn.execute(
+        """
+        SELECT COUNT(*) FROM emails
+        WHERE summary_detailed IS NULL OR TRIM(summary_detailed) = ''
+        """
+    ).fetchone()
+    return int(row[0]) if row else 0
+
+
 def list_unsummarized_emails(
     conn: sqlite3.Connection, *, limit: int = 500
 ) -> list[dict[str, Any]]:
@@ -217,6 +227,85 @@ def list_unsummarized_emails(
         (limit,),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def count_unsummarized_emails_since(
+    conn: sqlite3.Connection, *, since_ts: float
+) -> int:
+    row = conn.execute(
+        """
+        SELECT COUNT(*) FROM emails
+        WHERE COALESCE(received_at, created_at) >= ?
+          AND (summary_detailed IS NULL OR TRIM(summary_detailed) = '')
+        """,
+        (since_ts,),
+    ).fetchone()
+    return int(row[0]) if row else 0
+
+
+def list_emails_for_summary_scan(
+    conn: sqlite3.Connection,
+    *,
+    since_ts: float,
+    pending_only: bool = False,
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    query = """
+        SELECT * FROM emails
+        WHERE COALESCE(received_at, created_at) >= ?
+    """
+    params: list[Any] = [since_ts]
+    if pending_only:
+        query += " AND (summary_detailed IS NULL OR TRIM(summary_detailed) = '')"
+    query += " ORDER BY COALESCE(received_at, created_at) ASC"
+    if limit is not None:
+        query += " LIMIT ?"
+        params.append(limit)
+    rows = conn.execute(query, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+SUMMARY_QUEUE_SKIP_MARKER = "[queue cleared]"
+
+
+def reset_summary_data_for_emails(
+    conn: sqlite3.Connection, email_ids: list[str]
+) -> None:
+    if not email_ids:
+        return
+    placeholders = ",".join("?" for _ in email_ids)
+    conn.execute(
+        f"""
+        UPDATE emails
+        SET summary_short = NULL, summary_detailed = NULL, is_spam = NULL
+        WHERE id IN ({placeholders})
+        """,
+        email_ids,
+    )
+    conn.commit()
+
+
+def skip_summary_backlog_for_emails(
+    conn: sqlite3.Connection,
+    email_ids: list[str],
+    *,
+    marker: str = SUMMARY_QUEUE_SKIP_MARKER,
+) -> None:
+    """Mark unsummarized mail as done so it leaves the summary backlog."""
+    if not email_ids:
+        return
+    placeholders = ",".join("?" for _ in email_ids)
+    short = marker[:500]
+    conn.execute(
+        f"""
+        UPDATE emails
+        SET summary_short = ?, summary_detailed = ?
+        WHERE id IN ({placeholders})
+          AND (summary_detailed IS NULL OR TRIM(summary_detailed) = '')
+        """,
+        [short, marker, *email_ids],
+    )
+    conn.commit()
 
 
 def get_email(conn: sqlite3.Connection, email_id: str) -> dict[str, Any] | None:

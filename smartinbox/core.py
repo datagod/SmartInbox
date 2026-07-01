@@ -5,39 +5,55 @@ from __future__ import annotations
 import asyncio
 import copy
 import time
+from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
 
-from smartinbox.chatterbox_models import normalize_tts_model
+from smartinbox.chatterbox_models import model_repo_id_from_info, normalize_tts_model
 from smartinbox.chatterbox_tts import (
     apply_delivery_mode_settings,
     apply_tts_model_settings,
     apply_voice_override,
     chatterbox_settings_from_config,
+    get_chatterbox_model_info,
     get_or_synthesize_speech,
     list_chatterbox_voices,
+    synthesize_speech,
 )
 from smartinbox.config import data_dir
+from collections import deque
+
 from smartinbox.calendar_events import (
     count_emails_by_provider,
     format_provider_counts,
     calendar_extraction_event_count,
+    count_calendar_scanned_no_events,
+    count_emails_pending_calendar_extraction,
     is_email_extracted,
+    get_calendar_event,
     list_calendar_events,
     list_emails_for_calendar_scan,
     mark_email_extracted,
+    delete_calendar_event,
     record_event_vote,
     reset_calendar_data_for_emails,
+    CALENDAR_QUEUE_SKIP_EVENT_COUNT,
+    skip_calendar_backlog_for_emails,
     upsert_calendar_event,
 )
 from smartinbox.calendar_extract import (
     build_calendar_ollama_options,
     extract_calendar_events,
+    list_loaded_ollama_models,
     preload_ollama_model,
 )
-from smartinbox.calendar_body import parse_body_calendar_events, parse_summary_calendar_events
+from smartinbox.calendar_body import (
+    build_calendar_llm_context,
+    preprocess_email_calendar_events,
+    should_call_calendar_llm,
+)
 from smartinbox.calendar_ics import parse_ics_calendar_events
 from smartinbox.demo_data import build_demo_calendar_events, build_demo_emails
 from smartinbox.email_search import search_demo_emails, search_stored_emails
@@ -60,7 +76,12 @@ from smartinbox.db import (
     clear_all_emails,
     delete_emails_received_since,
     list_emails,
+    count_unsummarized_emails,
+    list_emails_for_summary_scan,
     list_unsummarized_emails,
+    reset_summary_data_for_emails,
+    skip_summary_backlog_for_emails,
+    count_unsummarized_emails_since,
     mark_email_alerted,
     set_email_starred,
     set_setting,
@@ -70,6 +91,7 @@ from smartinbox.db import (
 )
 from smartinbox.storage_stats import get_storage_stats
 from smartinbox.sender_interest import (
+    is_sender_downvoted,
     is_sender_muted,
     list_ranked_sender_interest,
     record_sender_vote,
@@ -94,6 +116,7 @@ from smartinbox.delivery_modes import (
     prepend_name_greeting,
 )
 from smartinbox.email_summary import (
+    build_summary_ollama_options,
     default_system_prompt,
     list_ollama_models,
     model_matches_listed,
@@ -125,6 +148,7 @@ from smartinbox.tts_recording_cache import (
     load_event_tts_prefs,
     prepend_sender_announcement,
     recording_filename,
+    resolve_recordings_dir,
     save_event_tts_prefs,
 )
 
@@ -294,12 +318,24 @@ class SmartInboxCore:
         self._poll_task: asyncio.Task[None] | None = None
         self._poll_lock = asyncio.Lock()
         self._email_tasks: set[asyncio.Task[None]] = set()
+        self._summary_backfill: dict[str, Any] = {
+            "running": False,
+            "done": 0,
+            "total": 0,
+        }
         self._summary_backfill_task: asyncio.Task[None] | None = None
         self._summary_in_flight = 0
-        summary_concurrency = int(self.ollama_config.get("summary_concurrency", 2))
-        self._email_summary_semaphore = asyncio.Semaphore(
-            max(1, min(8, summary_concurrency))
-        )
+        self._calendar_queue_samples: deque[dict[str, Any]] = deque(maxlen=96)
+        self._calendar_queue_sample_at = 0.0
+        summary_concurrency = int(self.ollama_config.get("summary_concurrency", 1))
+        self._summary_concurrency = max(1, min(8, summary_concurrency))
+        self._email_summary_semaphore = asyncio.Semaphore(self._summary_concurrency)
+        self._ollama_semaphore = asyncio.Semaphore(1)
+        self._llm_timing_samples: dict[str, deque[dict[str, Any]]] = {
+            "summary": deque(maxlen=48),
+            "spam": deque(maxlen=48),
+            "calendar": deque(maxlen=48),
+        }
         self._last_alert_at = 0.0
         self._last_poll_at: float | None = None
 
@@ -318,23 +354,49 @@ class SmartInboxCore:
         self._email_tasks.add(task)
         task.add_done_callback(self._email_tasks.discard)
 
-    async def _wait_for_summary_priority(
+    @asynccontextmanager
+    async def _ollama_slot(self):
+        """One Ollama inference at a time — avoids server queue pile-up and timeouts."""
+        async with self._ollama_semaphore:
+            yield
+
+    def _calendar_llm_deferred_by_summary(
         self, *, except_email_id: str | None = None
+    ) -> bool:
+        """True when calendar LLM should wait for inbox summaries to finish."""
+        if self._demo_mode:
+            return False
+        if self._summary_in_flight > 0:
+            return True
+        if self._summary_backfill_task and not self._summary_backfill_task.done():
+            return True
+        rows = list_unsummarized_emails(self._conn, limit=10)
+        if except_email_id:
+            rows = [
+                r for r in rows if str(r.get("id") or "") != except_email_id
+            ]
+        return bool(rows)
+
+    async def _wait_for_summary_priority(
+        self,
+        *,
+        except_email_id: str | None = None,
+        wait_for_backlog: bool = True,
     ) -> None:
-        """Pause calendar/voice Ollama work while inbox summaries are still pending."""
+        """Pause lower-priority Ollama work while inbox summaries are in flight."""
         while self._running:
             if self._summary_in_flight > 0:
                 await asyncio.sleep(0.25)
                 continue
-            if self._summary_backfill_task and not self._summary_backfill_task.done():
-                await asyncio.sleep(1)
-                continue
-            rows = list_unsummarized_emails(self._conn, limit=10)
-            if except_email_id:
-                rows = [
-                    r for r in rows if str(r.get("id") or "") != except_email_id
-                ]
-            if rows:
+            if not wait_for_backlog:
+                return
+            if self._calendar_llm_deferred_by_summary(except_email_id=except_email_id):
+                # Backlog remains but backfill stopped (cancelled, Ollama error, etc.).
+                if not (
+                    self._summary_backfill_task
+                    and not self._summary_backfill_task.done()
+                ):
+                    self._queue_unsummarized_backfill()
                 await asyncio.sleep(1)
                 continue
             return
@@ -624,6 +686,134 @@ class SmartInboxCore:
             include_hidden=include_hidden,
         )
 
+    def _record_calendar_queue_sample(
+        self,
+        pending: int,
+        *,
+        summary_pending: int = 0,
+        force: bool = False,
+    ) -> None:
+        now = time.time()
+        if (
+            not force
+            and now - self._calendar_queue_sample_at < 4.0
+            and self._calendar_queue_samples
+        ):
+            last = self._calendar_queue_samples[-1]
+            if (
+                int(last.get("pending") or 0) == int(pending)
+                and int(last.get("summary_pending") or 0) == int(summary_pending)
+            ):
+                return
+        self._calendar_queue_sample_at = now
+        self._calendar_queue_samples.append(
+            {
+                "ts": now,
+                "pending": int(pending),
+                "summary_pending": int(summary_pending),
+            }
+        )
+
+    def _record_llm_timing(
+        self, kind: str, duration_sec: float, *, success: bool = True
+    ) -> None:
+        samples = self._llm_timing_samples.get(kind)
+        if samples is None:
+            return
+        samples.append(
+            {
+                "ts": time.time(),
+                "duration": round(float(duration_sec), 2),
+                "success": bool(success),
+            }
+        )
+
+    def _llm_timing_stats(self) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        for kind, samples in self._llm_timing_samples.items():
+            items = list(samples)
+            durations = [
+                float(s["duration"]) for s in items if s.get("success")
+            ]
+            recent = items[-1] if items else None
+            out[kind] = {
+                "count": len(items),
+                "success_count": len(durations),
+                "avg_sec": (
+                    round(sum(durations) / len(durations), 2) if durations else None
+                ),
+                "last_sec": recent.get("duration") if recent else None,
+                "last_success": recent.get("success") if recent else None,
+                "last_at": recent.get("ts") if recent else None,
+                "recent": items[-12:],
+            }
+        return out
+
+    def get_pipeline_status(self, *, list_days: int = 30) -> dict[str, Any]:
+        queue = self.get_calendar_queue_stats(list_days=list_days)
+        cal_bf = dict(self._calendar_backfill)
+        summary_bf = dict(self._summary_backfill)
+        summary_active = bool(
+            summary_bf.get("running")
+            or (
+                self._summary_backfill_task
+                and not self._summary_backfill_task.done()
+            )
+        )
+        active_tasks = sum(1 for t in self._email_tasks if t and not t.done())
+        return {
+            "queue": queue,
+            "calendar_backfill": cal_bf,
+            "summary_backfill": summary_bf,
+            "summary_backfill_active": summary_active,
+            "summary_in_flight": self._summary_in_flight,
+            "email_tasks_active": active_tasks,
+            "poll_interval": self._poll_interval,
+            "last_poll_at": self._last_poll_at,
+            "polling": self._running,
+            "ollama": {
+                "base_url": self.get_ollama_base_url(),
+                "model": self.get_ollama_model(),
+                "spam_model": self.get_spam_ollama_model(),
+                "timeout": self.get_ollama_timeout(),
+                "summary_concurrency": self._summary_concurrency,
+                "calendar_concurrency": self.get_calendar_extract_concurrency(),
+                "spam_gpu": self.get_spam_ollama_main_gpu(),
+                "calendar_gpu": self.get_calendar_ollama_main_gpu(),
+            },
+            "llm_timings": self._llm_timing_stats(),
+        }
+
+    def get_calendar_queue_stats(self, *, list_days: int = 30) -> dict[str, Any]:
+        list_days = max(1, min(int(list_days), 365))
+        since_ts = time.time() - list_days * 86400
+        pending = count_emails_pending_calendar_extraction(
+            self._conn, since_ts=since_ts
+        )
+        scanned_no_events = count_calendar_scanned_no_events(
+            self._conn, since_ts=since_ts
+        )
+        summary_pending = 0 if self._demo_mode else count_unsummarized_emails(self._conn)
+        self._record_calendar_queue_sample(
+            pending, summary_pending=summary_pending
+        )
+        bf = dict(self._calendar_backfill)
+        return {
+            "pending": pending,
+            "scanned_no_events": scanned_no_events,
+            "summary_pending": summary_pending,
+            "blocked_by_summary": self._calendar_llm_deferred_by_summary(),
+            "summary_backfill_active": bool(
+                self._summary_backfill_task
+                and not self._summary_backfill_task.done()
+            ),
+            "calendar_scan_running": bool(bf.get("running")),
+            "scan_done": int(bf.get("done") or 0),
+            "scan_total": int(bf.get("total") or 0),
+            "list_days": list_days,
+            "history": list(self._calendar_queue_samples),
+        }
+
     def get_calendar_view(
         self,
         *,
@@ -652,6 +842,7 @@ class SmartInboxCore:
             include_hidden=True,
         )
         mail = mail_accounts_status(self._conn)
+        queue = self.get_calendar_queue_stats(list_days=list_days)
         return {
             "view_mode": mode,
             "anchor": anchor.date().isoformat(),
@@ -660,6 +851,7 @@ class SmartInboxCore:
             "events": all_events,
             "list_days": list_days,
             "backfill": dict(self._calendar_backfill),
+            "queue": queue,
             "extract_concurrency": self.get_calendar_extract_concurrency(),
             "calendar_ollama_main_gpu": self.get_calendar_ollama_main_gpu(),
             "mail_accounts": mail.get("accounts") or [],
@@ -709,6 +901,33 @@ class SmartInboxCore:
         )
         return {"event_id": event_id, "interest": entry}
 
+    def remove_calendar_event(self, event_id: str) -> dict[str, Any] | None:
+        """Delete a calendar event without recording a downvote."""
+        if self._demo_mode:
+            before = len(self._demo_calendar_events)
+            title = None
+            kept: list[dict[str, Any]] = []
+            for row in self._demo_calendar_events:
+                if str(row.get("id")) == event_id:
+                    title = str(row.get("title") or "Event")
+                    continue
+                kept.append(row)
+            if len(kept) == before:
+                return None
+            self._demo_calendar_events = kept
+            self.add_log(f"Removed calendar event: {title}", "info")
+            return {"event_id": event_id, "removed": True}
+        existing = get_calendar_event(self._conn, event_id)
+        if existing is None:
+            return None
+        if not delete_calendar_event(self._conn, event_id):
+            return None
+        self.add_log(
+            f"Removed calendar event: {existing.get('title') or 'Event'}",
+            "info",
+        )
+        return {"event_id": event_id, "removed": True}
+
     async def _extract_calendar_for_email(
         self,
         msg: dict[str, Any],
@@ -730,6 +949,19 @@ class SmartInboxCore:
         progress = f"[{index}/{total}] " if index is not None and total is not None else ""
         ref_ts = float(msg.get("received_at") or time.time())
 
+        if is_sender_downvoted(self._conn, sender):
+            mark_email_extracted(
+                self._conn,
+                email_id,
+                event_count=CALENDAR_QUEUE_SKIP_EVENT_COUNT,
+            )
+            self.add_log(
+                f"Calendar extract {progress}{provider_label}: "
+                f"skipped — downvoted sender — {subject}",
+                "info",
+            )
+            return 0
+
         ics_text = str(msg.get("calendar_ics") or "").strip()
         if not ics_text and not self._demo_mode:
             row = get_email(self._conn, email_id)
@@ -739,6 +971,7 @@ class SmartInboxCore:
         events: list[dict[str, Any]] = []
         err: str | None = None
         source = ""
+        used_llm = False
 
         if ics_text:
             events = parse_ics_calendar_events(
@@ -757,55 +990,70 @@ class SmartInboxCore:
                 )
 
         body_text = str(msg.get("body_text") or msg.get("snippet") or "")
-        if not events and body_text:
-            events = parse_body_calendar_events(
-                body_text,
-                email_id=email_id,
-                sender=sender,
-                subject=mail_subject,
-                timezone=self.timezone,
-            )
-            if events:
-                source = "body date"
+        summary_text = str(
+            msg.get("summary_detailed") or msg.get("summary_short") or ""
+        ).strip()
+        if not summary_text and not self._demo_mode:
+            row = get_email(self._conn, email_id)
+            if row:
+                summary_text = str(
+                    row.get("summary_detailed") or row.get("summary_short") or ""
+                ).strip()
 
         if not events:
-            summary_text = str(
-                msg.get("summary_detailed") or msg.get("summary_short") or ""
-            ).strip()
-            if not summary_text and not self._demo_mode:
-                row = get_email(self._conn, email_id)
-                if row:
-                    summary_text = str(
-                        row.get("summary_detailed") or row.get("summary_short") or ""
-                    ).strip()
-            if summary_text:
-                events = parse_summary_calendar_events(
-                    summary_text,
+            events, preprocess_source = preprocess_email_calendar_events(
+                body=body_text,
+                subject=mail_subject,
+                summary=summary_text or None,
+                email_id=email_id,
+                sender=sender,
+                timezone=self.timezone,
+                reference_ts=ref_ts,
+            )
+            if events and preprocess_source:
+                source = preprocess_source
+
+        if not events and should_call_calendar_llm(
+            body_text,
+            mail_subject,
+            summary_text or None,
+            events_found=bool(events),
+        ):
+            if self._calendar_llm_deferred_by_summary(
+                except_email_id=except_email_id
+            ):
+                self.add_log(
+                    f"Calendar extract {progress}{provider_label}: "
+                    f"LLM deferred — awaiting summaries — {subject}",
+                    "info",
+                )
+                return 0
+            llm_body = build_calendar_llm_context(
+                body_text, mail_subject, summary_text or None
+            )
+            t0 = time.monotonic()
+            async with self._ollama_slot():
+                events, err = await extract_calendar_events(
+                    base_url=self.get_ollama_base_url(),
+                    model=self.get_ollama_model(),
                     email_id=email_id,
                     sender=sender,
                     subject=mail_subject,
+                    body=llm_body,
+                    reference_ts=ref_ts,
                     timezone=self.timezone,
+                    timeout=self.get_ollama_timeout(),
+                    ollama_options=self.get_calendar_ollama_options(),
+                    keep_alive=-1,
                 )
-                if events:
-                    source = "summary date"
-
-        if not events:
-            await self._wait_for_summary_priority(except_email_id=except_email_id)
-            events, err = await extract_calendar_events(
-                base_url=self.get_ollama_base_url(),
-                model=self.get_ollama_model(),
-                email_id=email_id,
-                sender=sender,
-                subject=mail_subject,
-                body=body_text,
-                reference_ts=ref_ts,
-                timezone=self.timezone,
-                timeout=self.get_ollama_timeout(),
-                ollama_options=self.get_calendar_ollama_options(),
-                keep_alive="30m",
+            self._record_llm_timing(
+                "calendar",
+                time.monotonic() - t0,
+                success=err is None,
             )
             if events:
                 source = "Ollama"
+            used_llm = True
 
         saved = 0
         for event in events:
@@ -825,8 +1073,9 @@ class SmartInboxCore:
                 "warning",
             )
         else:
+            note = "no dates" if used_llm else "no date signals — skipped LLM"
             self.add_log(
-                f"Calendar extract {progress}{provider_label}: no dates — {subject}",
+                f"Calendar extract {progress}{provider_label}: {note} — {subject}",
                 "info",
             )
         return saved
@@ -878,6 +1127,7 @@ class SmartInboxCore:
             new_for_acct = 0
             existing_for_acct = 0
             filtered_for_acct = 0
+            pending_processing: list[tuple[dict[str, Any], str]] = []
             for msg in messages:
                 received = float(msg.get("received_at") or 0)
                 if received > 0 and received < since_ts:
@@ -888,12 +1138,17 @@ class SmartInboxCore:
                 if result == "new":
                     new_for_acct += 1
                     stats["new"] += 1
-                    self._queue_stored_mail_processing(msg, result, allow_alert=False)
+                    pending_processing.append((msg, result))
                 elif result == "ics_updated":
-                    self._queue_stored_mail_processing(msg, result, allow_alert=False)
+                    pending_processing.append((msg, result))
                 else:
                     existing_for_acct += 1
                     stats["existing"] += 1
+            if pending_processing:
+                self._notify_emails()
+                await asyncio.sleep(0)
+            for msg, result in pending_processing:
+                self._queue_stored_mail_processing(msg, result, allow_alert=False)
             self.add_log(
                 f"Calendar import ({provider_label}): done — {new_for_acct} new, "
                 f"{existing_for_acct} already stored, {filtered_for_acct} outside window, "
@@ -914,6 +1169,14 @@ class SmartInboxCore:
         since_seconds = days * 86400
         label = f"{days} day{'s' if days != 1 else ''}"
         return since_seconds, "days", days, label
+
+    def _normalize_calendar_lookback(
+        self, *, days: int | None = None, hours: int | None = None
+    ) -> tuple[float, str, int, str]:
+        since_seconds, unit, lookback, label = self._normalize_mail_fetch_lookback(
+            days=days, hours=hours
+        )
+        return time.time() - since_seconds, unit, lookback, label
 
     async def run_mail_fetch(
         self,
@@ -1037,6 +1300,7 @@ class SmartInboxCore:
                 f"{inbox_note} in local database",
                 "info",
             )
+            pending_processing: list[tuple[dict[str, Any], str]] = []
             for i, msg in enumerate(in_window):
                 provider = str(msg.get("provider") or "mail").strip().lower() or "mail"
                 result = self._persist_imported_email(msg)
@@ -1046,12 +1310,17 @@ class SmartInboxCore:
                     else:
                         stats["existing"] += 1
                     self._log_import_result(msg, result, provider=provider)
-                    self._queue_stored_mail_processing(
-                        msg, result, allow_alert=False, queue_summary=False
-                    )
+                    pending_processing.append((msg, result))
                 else:
                     stats["existing"] += 1
                 self._mail_fetch_job["done"] = i + 1
+            if pending_processing:
+                self._notify_emails()
+                await asyncio.sleep(0)
+            for msg, result in pending_processing:
+                self._queue_stored_mail_processing(
+                    msg, result, allow_alert=False, queue_summary=False
+                )
             self._queue_unsummarized_backfill()
             self.add_log(
                 f"Mail fetch complete: {stats['new']} new, {stats['existing']} already stored, "
@@ -1107,6 +1376,12 @@ class SmartInboxCore:
             "demo_mode": self._demo_mode,
             "mail_accounts": mail.get("accounts") or [],
             "fetch": dict(self._mail_fetch_job),
+            "pipeline": self.get_pipeline_status(),
+            "logs": sorted(
+                self.log_entries[-100:],
+                key=lambda e: float(e.get("at") or 0),
+                reverse=True,
+            ),
         }
 
     def get_storage_view(self) -> dict[str, Any]:
@@ -1119,16 +1394,31 @@ class SmartInboxCore:
         }
 
     async def backfill_calendar_events(
-        self, *, days: int = 5, force: bool = False, import_from_source: bool = False
+        self,
+        *,
+        days: int | None = None,
+        hours: int | None = None,
+        force: bool = False,
+        import_from_source: bool = False,
     ) -> None:
         if self._demo_mode or self._calendar_backfill.get("running"):
             return
-        days = max(1, min(int(days), 365))
+        since_ts, unit, lookback, lookback_label = self._normalize_calendar_lookback(
+            days=days, hours=hours
+        )
+        import_days = (
+            max(1, min(int(hours or 0) // 24 or 1, 365))
+            if unit == "hours"
+            else max(1, min(int(lookback), 365))
+        )
         self._calendar_backfill = {
             "running": True,
             "done": 0,
             "total": 0,
-            "days": days,
+            "lookback": lookback,
+            "unit": unit,
+            "days": lookback if unit == "days" else None,
+            "hours": lookback if unit == "hours" else None,
             "force": force,
             "by_provider": {},
             "phase": "import" if import_from_source else "scan",
@@ -1145,11 +1435,11 @@ class SmartInboxCore:
             else:
                 mode = "extract dates from local mail"
             self.add_log(
-                f"Calendar process started: {mode} (last {days} day{'s' if days != 1 else ''})",
+                f"Calendar process started: {mode} (last {lookback_label})",
                 "info",
             )
             if import_from_source:
-                import_stats = await self.import_mail_from_sources(days)
+                import_stats = await self.import_mail_from_sources(import_days)
                 self.add_log(
                     f"Calendar import complete: {import_stats['new']} new, "
                     f"{import_stats['existing']} already stored, "
@@ -1159,10 +1449,9 @@ class SmartInboxCore:
                     f"{'s' if import_stats['accounts'] != 1 else ''}",
                     "info",
                 )
-            since_ts = time.time() - days * 86400
             self.add_log(
                 f"Calendar scan: loading emails from local database "
-                f"(since {days} day{'s' if days != 1 else ''} ago)…",
+                f"(since {lookback_label} ago)…",
                 "info",
             )
             to_scan = list_emails_for_calendar_scan(
@@ -1172,8 +1461,8 @@ class SmartInboxCore:
             )
             if force and to_scan:
                 self.add_log(
-                    f"Calendar scan: clearing prior extraction for {len(to_scan)} email"
-                    f"{'s' if len(to_scan) != 1 else ''} before re-processing",
+                    f"Calendar queue cleared: reset extraction for {len(to_scan)} email"
+                    f"{'s' if len(to_scan) != 1 else ''} (last {lookback_label})",
                     "info",
                 )
                 reset_calendar_data_for_emails(
@@ -1193,7 +1482,7 @@ class SmartInboxCore:
             )
             if total == 0:
                 self.add_log(
-                    f"Calendar scan: no emails in the last {days} day{'s' if days != 1 else ''} "
+                    f"Calendar scan: no emails in the last {lookback_label} "
                     f"(all connected inboxes)",
                     "info",
                 )
@@ -1212,7 +1501,6 @@ class SmartInboxCore:
                 "info",
             )
             for i in range(0, total, batch_size):
-                await self._wait_for_summary_priority()
                 batch = to_scan[i : i + batch_size]
                 results = await asyncio.gather(
                     *(
@@ -1225,6 +1513,17 @@ class SmartInboxCore:
                 events_found += sum(results)
                 done = min(i + len(batch), total)
                 self._calendar_backfill["done"] = done
+                pending = count_emails_pending_calendar_extraction(
+                    self._conn, since_ts=since_ts
+                )
+                summary_pending = (
+                    0 if self._demo_mode else count_unsummarized_emails(self._conn)
+                )
+                self._record_calendar_queue_sample(
+                    pending,
+                    summary_pending=summary_pending,
+                    force=True,
+                )
                 self.add_log(
                     f"Calendar extract: {done}/{total} emails done "
                     f"({events_found} event{'s' if events_found != 1 else ''} found so far)",
@@ -1249,7 +1548,10 @@ class SmartInboxCore:
                 "running": False,
                 "done": snap.get("done", 0),
                 "total": snap.get("total", 0),
-                "days": days,
+                "lookback": lookback,
+                "unit": unit,
+                "days": lookback if unit == "days" else None,
+                "hours": lookback if unit == "hours" else None,
                 "force": force,
                 "by_provider": snap.get("by_provider") or {},
             }
@@ -1258,20 +1560,30 @@ class SmartInboxCore:
         return bool(self._calendar_backfill.get("running"))
 
     async def _start_calendar_backfill_when_ready(
-        self, *, days: int = 30, force: bool = False, import_from_source: bool = False
+        self,
+        *,
+        days: int | None = None,
+        hours: int | None = None,
+        force: bool = False,
+        import_from_source: bool = False,
     ) -> None:
-        """Run calendar backfill only after pending inbox summaries are done."""
-        while self._running:
-            await self._wait_for_summary_priority()
-            break
+        """Start calendar backfill; rule-based extraction runs immediately, LLM waits on summaries."""
         if not self._running:
             return
         self.start_calendar_backfill(
-            days=days, force=force, import_from_source=import_from_source
+            days=days,
+            hours=hours,
+            force=force,
+            import_from_source=import_from_source,
         )
 
     def start_calendar_backfill(
-        self, *, days: int = 5, force: bool = False, import_from_source: bool = False
+        self,
+        *,
+        days: int | None = None,
+        hours: int | None = None,
+        force: bool = False,
+        import_from_source: bool = False,
     ) -> bool:
         if self._demo_mode:
             return False
@@ -1281,10 +1593,802 @@ class SmartInboxCore:
             return False
         self._calendar_backfill_task = asyncio.create_task(
             self.backfill_calendar_events(
-                days=days, force=force, import_from_source=import_from_source
+                days=days,
+                hours=hours,
+                force=force,
+                import_from_source=import_from_source,
             )
         )
         return True
+
+    def cancel_calendar_backfill(self) -> None:
+        """Stop an in-flight calendar backfill."""
+        task = self._calendar_backfill_task
+        if task and not task.done():
+            task.cancel()
+        snap = dict(self._calendar_backfill)
+        self._calendar_backfill = {
+            "running": False,
+            "done": snap.get("done", 0),
+            "total": snap.get("total", 0),
+            "lookback": snap.get("lookback"),
+            "unit": snap.get("unit"),
+            "days": snap.get("days"),
+            "hours": snap.get("hours"),
+            "force": snap.get("force"),
+            "by_provider": snap.get("by_provider") or {},
+        }
+
+    def clear_calendar_queue(
+        self,
+        *,
+        days: int | None = None,
+        hours: int | None = None,
+    ) -> dict[str, Any]:
+        """Empty the calendar extraction queue for stored mail in the lookback window."""
+        since_ts, unit, lookback, lookback_label = self._normalize_calendar_lookback(
+            days=days, hours=hours
+        )
+        if self._demo_mode:
+            return {
+                "cleared": 0,
+                "pending_remaining": 0,
+                "pending_in_window": 0,
+                "lookback": lookback,
+                "unit": unit,
+            }
+        self.cancel_calendar_backfill()
+        pending = list_emails_for_calendar_scan(
+            self._conn, since_ts=since_ts, pending_only=True
+        )
+        if pending:
+            skip_calendar_backlog_for_emails(
+                self._conn, [str(msg["id"]) for msg in pending]
+            )
+        cleared = len(pending)
+        pending_remaining = count_emails_pending_calendar_extraction(
+            self._conn, since_ts=0.0
+        )
+        pending_in_window = count_emails_pending_calendar_extraction(
+            self._conn, since_ts=since_ts
+        )
+        summary_pending = count_unsummarized_emails(self._conn)
+        self._record_calendar_queue_sample(
+            pending_remaining,
+            summary_pending=summary_pending,
+            force=True,
+        )
+        self.add_log(
+            f"Calendar queue emptied: {cleared} email"
+            f"{'s' if cleared != 1 else ''} skipped (last {lookback_label})"
+            f" — {pending_remaining} still pending overall",
+            "info",
+        )
+        return {
+            "cleared": cleared,
+            "pending_remaining": pending_remaining,
+            "pending_in_window": pending_in_window,
+            "lookback": lookback,
+            "unit": unit,
+        }
+
+    def start_calendar_reprocess(
+        self,
+        *,
+        days: int | None = None,
+        hours: int | None = None,
+    ) -> bool:
+        """Run calendar extraction for pending mail in the lookback window."""
+        since_ts, unit, lookback, lookback_label = self._normalize_calendar_lookback(
+            days=days, hours=hours
+        )
+        in_window = list_emails_for_calendar_scan(
+            self._conn, since_ts=since_ts, pending_only=False
+        )
+        if in_window:
+            reset_calendar_data_for_emails(
+                self._conn, [str(msg["id"]) for msg in in_window]
+            )
+        pending = list_emails_for_calendar_scan(
+            self._conn, since_ts=since_ts, pending_only=True
+        )
+        if not pending:
+            self.add_log(
+                f"Calendar reprocess: no pending mail in the last {lookback_label}",
+                "info",
+            )
+            return False
+        self.add_log(
+            f"Calendar reprocess started (last {lookback_label})",
+            "info",
+        )
+        return self.start_calendar_backfill(
+            days=days, hours=hours, force=False, import_from_source=False
+        )
+
+    def clear_calendar_queue_and_reprocess(
+        self,
+        *,
+        days: int | None = None,
+        hours: int | None = None,
+    ) -> bool:
+        """Reset calendar extraction for stored mail in the lookback window and re-scan."""
+        self.clear_calendar_queue(days=days, hours=hours)
+        return self.start_calendar_reprocess(days=days, hours=hours)
+
+    def cancel_summary_backfill(self) -> None:
+        """Stop an in-flight summary backfill."""
+        task = self._summary_backfill_task
+        if task and not task.done():
+            task.cancel()
+        snap = dict(self._summary_backfill)
+        self._summary_backfill = {
+            "running": False,
+            "done": snap.get("done", 0),
+            "total": snap.get("total", 0),
+            "lookback": snap.get("lookback"),
+            "unit": snap.get("unit"),
+            "days": snap.get("days"),
+            "hours": snap.get("hours"),
+        }
+
+    def clear_summary_queue(
+        self,
+        *,
+        days: int | None = None,
+        hours: int | None = None,
+    ) -> dict[str, Any]:
+        """Empty the summary backlog for stored mail in the lookback window."""
+        since_ts, unit, lookback, lookback_label = self._normalize_calendar_lookback(
+            days=days, hours=hours
+        )
+        if self._demo_mode:
+            return {
+                "cleared": 0,
+                "pending_remaining": 0,
+                "lookback": lookback,
+                "unit": unit,
+            }
+        self.cancel_summary_backfill()
+        pending = list_emails_for_summary_scan(
+            self._conn, since_ts=since_ts, pending_only=True
+        )
+        if pending:
+            skip_summary_backlog_for_emails(
+                self._conn, [str(msg["id"]) for msg in pending]
+            )
+        cleared = len(pending)
+        pending_remaining = count_unsummarized_emails(self._conn)
+        pending_in_window = count_unsummarized_emails_since(
+            self._conn, since_ts=since_ts
+        )
+        calendar_pending = count_emails_pending_calendar_extraction(
+            self._conn, since_ts=time.time() - 30 * 86400
+        )
+        self._record_calendar_queue_sample(
+            calendar_pending,
+            summary_pending=pending_remaining,
+            force=True,
+        )
+        self.add_log(
+            f"Summary queue emptied: {cleared} email"
+            f"{'s' if cleared != 1 else ''} skipped (last {lookback_label})"
+            f" — {pending_remaining} still awaiting summary overall",
+            "info",
+        )
+        self._notify_emails()
+        return {
+            "cleared": cleared,
+            "pending_remaining": pending_remaining,
+            "pending_in_window": pending_in_window,
+            "lookback": lookback,
+            "unit": unit,
+        }
+
+    def summary_backfill_running(self) -> bool:
+        return bool(self._summary_backfill.get("running"))
+
+    def start_summary_reprocess(
+        self,
+        *,
+        days: int | None = None,
+        hours: int | None = None,
+    ) -> bool:
+        """Run summary backfill for unsummarized mail in the lookback window."""
+        since_ts, unit, lookback, lookback_label = self._normalize_calendar_lookback(
+            days=days, hours=hours
+        )
+        in_window = list_emails_for_summary_scan(
+            self._conn, since_ts=since_ts, pending_only=False
+        )
+        if in_window:
+            reset_summary_data_for_emails(
+                self._conn, [str(msg["id"]) for msg in in_window]
+            )
+        pending = list_emails_for_summary_scan(
+            self._conn, since_ts=since_ts, pending_only=True
+        )
+        if not pending:
+            self.add_log(
+                f"Summary reprocess: no unsummarized mail in the last {lookback_label}",
+                "info",
+            )
+            return False
+        self.add_log(
+            f"Summary reprocess started (last {lookback_label})",
+            "info",
+        )
+        return self._start_summary_backfill(
+            since_ts=since_ts,
+            lookback=lookback,
+            unit=unit,
+        )
+
+    def _summary_worker_active(self) -> bool:
+        if self._summary_backfill_task and not self._summary_backfill_task.done():
+            return True
+        return bool(self._summary_backfill.get("running"))
+
+    def _calendar_worker_active(self) -> bool:
+        if self._calendar_backfill_task and not self._calendar_backfill_task.done():
+            return True
+        return bool(self._calendar_backfill.get("running"))
+
+    def _clear_stale_backfill_state(self) -> None:
+        """Drop running flags left behind when a worker task died or was cancelled."""
+        if self._summary_backfill.get("running") and not self._summary_worker_active():
+            snap = dict(self._summary_backfill)
+            self._summary_backfill = {**snap, "running": False}
+        if self._calendar_backfill.get("running") and not self._calendar_worker_active():
+            snap = dict(self._calendar_backfill)
+            self._calendar_backfill = {**snap, "running": False}
+
+    def kickstart_pipeline_workers(
+        self,
+        *,
+        calendar_days: int = 30,
+    ) -> dict[str, Any]:
+        """Resume stalled summary/calendar workers without clearing queues."""
+        if self._demo_mode:
+            return {
+                "summary_started": False,
+                "calendar_started": False,
+                "summary_pending": 0,
+                "calendar_pending": 0,
+                "message": "Demo mode",
+            }
+        self._clear_stale_backfill_state()
+        calendar_days = max(1, min(int(calendar_days), 365))
+        since_ts = time.time() - calendar_days * 86400
+
+        summary_pending = count_unsummarized_emails(self._conn)
+        calendar_pending = count_emails_pending_calendar_extraction(
+            self._conn, since_ts=since_ts
+        )
+        summary_was_running = self._summary_worker_active()
+        calendar_was_running = self._calendar_worker_active()
+
+        summary_started = False
+        if summary_pending > 0 and not summary_was_running:
+            summary_started = self._start_summary_backfill(limit=500)
+
+        calendar_started = False
+        if calendar_pending > 0 and not calendar_was_running:
+            calendar_started = self.start_calendar_backfill(days=calendar_days)
+
+        resumed: list[str] = []
+        if summary_started:
+            resumed.append("summary backfill")
+        if calendar_started:
+            resumed.append(f"calendar scan (last {calendar_days} days)")
+
+        if resumed:
+            message = f"Resumed {', '.join(resumed)}"
+            self.add_log(f"Pipeline kickstart: {message}", "info")
+        elif summary_pending or calendar_pending:
+            message = "Queues already running"
+            self.add_log(f"Pipeline kickstart: {message}", "info")
+        else:
+            message = "No pending pipeline work"
+            self.add_log(f"Pipeline kickstart: {message}", "info")
+
+        return {
+            "summary_started": summary_started,
+            "calendar_started": calendar_started,
+            "summary_pending": summary_pending,
+            "calendar_pending": calendar_pending,
+            "summary_running": self._summary_worker_active(),
+            "calendar_running": self._calendar_worker_active(),
+            "message": message,
+        }
+
+    async def kickstart_pipelines(
+        self,
+        *,
+        calendar_days: int = 30,
+    ) -> dict[str, Any]:
+        """Kickstart workers and run a detailed inbox poll for any missed mail."""
+        result = self.kickstart_pipeline_workers(calendar_days=calendar_days)
+        poll_new = 0
+        if self._running:
+            try:
+                poll_new = await self.poll_inbox(detailed=True)
+                result["poll_new"] = poll_new
+            except Exception as e:
+                result["poll_error"] = str(e)
+                self.add_log(f"Pipeline kickstart poll failed: {e}", "warning")
+        if poll_new:
+            note = f" — {poll_new} new message{'s' if poll_new != 1 else ''} from inbox poll"
+            result["message"] = str(result.get("message") or "") + note
+        return result
+
+    async def investigate_tts(self, *, test_synthesis: bool = True) -> dict[str, Any]:
+        """Run TTS health checks: config, Chatterbox reachability, voice, and optional synthesis."""
+        checks: list[dict[str, Any]] = []
+        issues: list[str] = []
+        warnings: list[str] = []
+
+        def add_check(
+            check_id: str,
+            label: str,
+            ok: bool,
+            detail: str,
+            *,
+            severity: str = "error",
+        ) -> None:
+            checks.append(
+                {"id": check_id, "label": label, "ok": ok, "detail": detail, "severity": severity}
+            )
+            if ok:
+                return
+            text = f"{label}: {detail}"
+            if severity == "warning":
+                warnings.append(text)
+            else:
+                issues.append(text)
+
+        if self._demo_mode:
+            add_check("demo_mode", "Demo mode", False, "spoken alerts disabled in demo")
+        else:
+            add_check("demo_mode", "Demo mode", True, "off")
+
+        cfg_enabled = bool(self.chatterbox_tts_config.get("enabled"))
+        if not cfg_enabled:
+            add_check("chatterbox_enabled", "Chatterbox TTS", False, "disabled in config")
+        else:
+            add_check("chatterbox_enabled", "Chatterbox TTS", True, "enabled")
+
+        if not self._alerts_enabled:
+            add_check("alerts_enabled", "Spoken alerts", False, "disabled in settings")
+        else:
+            add_check("alerts_enabled", "Spoken alerts", True, "enabled")
+
+        settings = self.get_event_tts_settings()
+        base_url = str(settings.get("base_url") or "").rstrip("/")
+        chosen = self.get_event_tts_voice()
+        voice_mode = str(settings.get("voice_mode") or "").strip().lower()
+        voice_name = ""
+        if chosen:
+            voice_mode = str(chosen.get("voice_mode") or voice_mode).strip().lower()
+            voice_name = str(chosen.get("voice") or "").strip()
+            add_check(
+                "voice_config",
+                "Voice selection",
+                bool(voice_name),
+                f"{voice_mode}: {voice_name}" if voice_name else "empty voice name",
+            )
+        elif voice_mode == "clone":
+            voice_name = str(settings.get("reference_audio_filename") or "").strip()
+            if voice_name:
+                add_check("voice_config", "Voice selection", True, f"clone: {voice_name} (config default)")
+            else:
+                add_check("voice_config", "Voice selection", False, "reference_audio_filename not set")
+        elif voice_mode == "predefined":
+            voice_name = str(settings.get("predefined_voice_id") or "").strip()
+            if voice_name:
+                add_check("voice_config", "Voice selection", True, f"predefined: {voice_name}")
+            else:
+                add_check("voice_config", "Voice selection", False, "predefined_voice_id not set")
+        else:
+            add_check("voice_config", "Voice selection", False, f"unknown voice mode {voice_mode!r}")
+
+        imp_mode = self._important_alert_mode
+        oth_mode = self._other_alert_mode
+        if imp_mode == "silent" and oth_mode == "silent":
+            add_check(
+                "alert_modes",
+                "Alert modes",
+                False,
+                "important and other senders both set to silent",
+                severity="warning",
+            )
+        else:
+            add_check(
+                "alert_modes",
+                "Alert modes",
+                True,
+                f"important={imp_mode}, other={oth_mode}",
+            )
+
+        now = time.time()
+        if self._last_alert_at and now - self._last_alert_at < self._alert_cooldown:
+            remain = max(0, int(self._alert_cooldown - (now - self._last_alert_at)))
+            add_check(
+                "cooldown",
+                "Alert cooldown",
+                True,
+                f"{remain}s remaining on {int(self._alert_cooldown)}s interval",
+                severity="warning",
+            )
+        else:
+            add_check(
+                "cooldown",
+                "Alert cooldown",
+                True,
+                f"{int(self._alert_cooldown)}s interval, ready for next alert",
+            )
+
+        watermark = self._inbox_watermark
+        if watermark:
+            stamp = self._format_log_timestamp(watermark)
+            add_check(
+                "inbox_watermark",
+                "Inbox watermark",
+                True,
+                f"alerts only for mail received after {stamp}",
+                severity="warning",
+            )
+        else:
+            add_check("inbox_watermark", "Inbox watermark", True, "none (all new mail eligible)")
+
+        cache_dir = str(settings.get("cache_dir") or "localrecordings")
+        try:
+            cache_path = resolve_recordings_dir(cache_dir)
+            add_check("cache_dir", "Recording cache", True, str(cache_path))
+        except Exception as e:
+            add_check("cache_dir", "Recording cache", False, str(e))
+
+        if self._voice_summary_enabled:
+            add_check(
+                "voice_summary",
+                "Voice summary (LLM)",
+                True,
+                f"enabled — uses {self.get_ollama_model()} for styled alerts",
+                severity="warning",
+            )
+        else:
+            add_check("voice_summary", "Voice summary (LLM)", True, "disabled (template-based alerts)")
+
+        model_payload: dict[str, Any] | None = None
+        voices: dict[str, list[dict[str, str]]] | None = None
+        chatterbox_ok = False
+        if cfg_enabled:
+            try:
+                model_payload = await get_chatterbox_model_info(settings)
+                model_info = model_payload.get("info") if isinstance(model_payload.get("info"), dict) else {}
+                loaded_model = str(
+                    model_payload.get("repo_id") or model_repo_id_from_info(model_info)
+                )
+                preferred_model = self.get_event_tts_model()
+                add_check(
+                    "chatterbox_reachable",
+                    "Chatterbox server",
+                    True,
+                    f"{base_url} — loaded {loaded_model} on {model_info.get('device', 'unknown')}",
+                )
+                if preferred_model != loaded_model:
+                    add_check(
+                        "tts_model",
+                        "TTS model match",
+                        False,
+                        f"SmartInbox expects {preferred_model} but Chatterbox loaded {loaded_model}",
+                        severity="warning",
+                    )
+                else:
+                    add_check(
+                        "tts_model",
+                        "TTS model match",
+                        True,
+                        preferred_model,
+                    )
+                chatterbox_ok = True
+            except Exception as e:
+                add_check("chatterbox_reachable", "Chatterbox server", False, str(e))
+
+            if chatterbox_ok:
+                try:
+                    voices = await list_chatterbox_voices(settings)
+                    clone_ids = {v["id"] for v in voices.get("clone") or []}
+                    predefined_ids = {v["id"] for v in voices.get("predefined") or []}
+                    clone_n = len(clone_ids)
+                    pre_n = len(predefined_ids)
+                    add_check(
+                        "chatterbox_voices",
+                        "Voice library",
+                        True,
+                        f"{clone_n} clone, {pre_n} predefined",
+                    )
+                    if voice_name:
+                        if voice_mode == "clone" and voice_name not in clone_ids:
+                            add_check(
+                                "voice_available",
+                                "Selected voice on server",
+                                False,
+                                f"clone {voice_name!r} not in Chatterbox reference files",
+                            )
+                        elif voice_mode == "predefined" and voice_name not in predefined_ids:
+                            add_check(
+                                "voice_available",
+                                "Selected voice on server",
+                                False,
+                                f"predefined {voice_name!r} not in Chatterbox voice list",
+                            )
+                        else:
+                            add_check(
+                                "voice_available",
+                                "Selected voice on server",
+                                True,
+                                f"{voice_mode}: {voice_name}",
+                            )
+                except Exception as e:
+                    add_check("chatterbox_voices", "Voice library", False, str(e))
+
+        test_result: dict[str, Any] | None = None
+        recommendations: list[str] = []
+        restart_cmd = self._chatterbox_restart_command()
+        docker_container = self.get_chatterbox_docker_container()
+        logs_hint = (
+            f"docker logs {docker_container}"
+            if docker_container
+            else "check Chatterbox container logs"
+        )
+        if test_synthesis and cfg_enabled and chatterbox_ok and not self._demo_mode:
+            test_text = "SmartInbox TTS check."
+            try:
+                audio, _mt, from_cache, saved_path = await get_or_synthesize_speech(
+                    test_text, settings=settings
+                )
+                detail = (
+                    f"cache hit ({len(audio)} bytes)"
+                    if from_cache
+                    else f"generated {len(audio)} bytes → {saved_path}"
+                )
+                add_check("test_synthesis", "Test synthesis", True, detail)
+                test_result = {
+                    "ok": True,
+                    "from_cache": from_cache,
+                    "bytes": len(audio),
+                    "path": saved_path,
+                    "text": test_text,
+                }
+            except Exception as e:
+                err = str(e)
+                add_check("test_synthesis", "Test synthesis", False, err)
+                test_result = {"ok": False, "error": err}
+                fallback_voice = ""
+                if voices:
+                    predefined = voices.get("predefined") or []
+                    if predefined:
+                        fallback_voice = str(predefined[0].get("id") or "").strip()
+                if fallback_voice:
+                    try:
+                        fallback_settings = apply_voice_override(
+                            settings,
+                            voice_mode="predefined",
+                            voice=fallback_voice,
+                        )
+                        _fb_audio, _fb_mt = await synthesize_speech(
+                            test_text, settings=fallback_settings
+                        )
+                        test_result["fallback_predefined_ok"] = True
+                        test_result["fallback_voice"] = fallback_voice
+                        add_check(
+                            "engine_health",
+                            "Chatterbox engine",
+                            False,
+                            f"clone voice failed; predefined {fallback_voice} works — check reference audio",
+                            severity="warning",
+                        )
+                        recommendations.append(
+                            f"Clone voice {voice_name!r} may be incompatible — try a .wav reference "
+                            f"or switch to predefined {fallback_voice!r} in Settings."
+                        )
+                    except Exception as fb_err:
+                        test_result["fallback_predefined_ok"] = False
+                        test_result["fallback_error"] = str(fb_err)
+                        add_check(
+                            "engine_health",
+                            "Chatterbox engine",
+                            False,
+                            "clone and predefined synthesis both failed",
+                        )
+                        fb_lower = str(fb_err).lower()
+                        if "cuda" in fb_lower or "device-side assert" in fb_lower:
+                            recommendations.append(
+                                "Chatterbox GPU state is corrupted (CUDA device-side assert). "
+                                f"Restart the Chatterbox container — {restart_cmd}, "
+                                "or use Restart Chatterbox on this page."
+                            )
+                        else:
+                            recommendations.append(
+                                "Chatterbox synthesis is failing for all voices. "
+                                f"Check {logs_hint} and restart the container ({restart_cmd}), "
+                                "or use Restart Chatterbox on this page."
+                            )
+                elif "cuda" in err.lower() or "device-side assert" in err.lower():
+                    recommendations.append(
+                        "Chatterbox GPU state is corrupted (CUDA device-side assert). "
+                        f"Restart the Chatterbox container — {restart_cmd}, "
+                        "or use Restart Chatterbox on this page."
+                    )
+                elif "HTTP 500" in err or "failed to synthesize" in err.lower():
+                    recommendations.append(
+                        "Chatterbox returned a synthesis error. "
+                        f"Check {logs_hint} — a container restart ({restart_cmd}) "
+                        "often clears CUDA GPU corruption. Or use Restart Chatterbox on this page."
+                    )
+
+        tts_log_markers = (
+            "TTS",
+            "Alert skipped",
+            "Test speak",
+            "Voice alert",
+            "Voice summary",
+            "TTS investigate",
+        )
+        recent_tts_logs = [
+            {
+                "ts": str(entry.get("ts") or ""),
+                "level": str(entry.get("level") or "info"),
+                "message": str(entry.get("message") or ""),
+            }
+            for entry in self.log_entries
+            if any(marker in str(entry.get("message") or "") for marker in tts_log_markers)
+        ][-12:]
+
+        healthy = not issues
+        if issues:
+            message = f"{len(issues)} issue{'s' if len(issues) != 1 else ''}: " + "; ".join(
+                issues[:4]
+            )
+            if len(issues) > 4:
+                message += f" (+{len(issues) - 4} more)"
+        elif warnings:
+            message = f"OK with {len(warnings)} note{'s' if len(warnings) != 1 else ''}"
+        else:
+            message = "All checks passed"
+
+        level = "info" if healthy else "warning"
+        self.add_log(f"TTS investigate: {message}", level)
+        for issue in issues:
+            self.add_log(f"TTS investigate — {issue}", "warning")
+        for note in warnings:
+            self.add_log(f"TTS investigate — note: {note}", "info")
+        for tip in recommendations:
+            self.add_log(f"TTS investigate — fix: {tip}", "warning")
+
+        return {
+            "healthy": healthy,
+            "message": message,
+            "checks": checks,
+            "issues": issues,
+            "warnings": warnings,
+            "recommendations": recommendations,
+            "recent_tts_logs": recent_tts_logs,
+            "test_synthesis": test_result,
+            "settings": {
+                "base_url": base_url,
+                "enabled": cfg_enabled,
+                "alerts_enabled": self._alerts_enabled,
+                "chosen_voice": chosen,
+                "delivery_mode": self.get_event_tts_delivery_mode(),
+                "tts_model": self.get_event_tts_model(),
+                "important_alert_mode": imp_mode,
+                "other_alert_mode": oth_mode,
+                "alert_cooldown": self._alert_cooldown,
+                "last_alert_at": self._last_alert_at or None,
+                "inbox_watermark": watermark,
+                "voice_summary_enabled": self._voice_summary_enabled,
+            },
+        }
+
+    def get_chatterbox_docker_container(self) -> str:
+        return str(self.chatterbox_tts_config.get("docker_container") or "").strip()
+
+    def _chatterbox_restart_command(self) -> str:
+        container = self.get_chatterbox_docker_container()
+        return f"docker restart {container}" if container else "restart the Chatterbox container"
+
+    async def _wait_for_chatterbox_online(
+        self,
+        *,
+        timeout: float = 90.0,
+        poll_interval: float = 3.0,
+    ) -> dict[str, Any]:
+        settings = self.get_event_tts_settings()
+        deadline = time.time() + max(10.0, float(timeout))
+        last_err: str | None = None
+        while time.time() < deadline:
+            try:
+                return await get_chatterbox_model_info(settings)
+            except Exception as e:
+                last_err = str(e)
+                await asyncio.sleep(poll_interval)
+        raise TimeoutError(
+            last_err or f"Chatterbox did not respond within {int(timeout)}s"
+        )
+
+    async def restart_chatterbox_tts(
+        self,
+        *,
+        verify: bool = True,
+        wait_timeout: float = 90.0,
+    ) -> dict[str, Any]:
+        """Restart the Chatterbox Docker container and optionally re-run TTS investigate."""
+        container = self.get_chatterbox_docker_container()
+        if not container:
+            msg = "chatterbox_tts.docker_container is not set in config.yaml"
+            self.add_log(f"Chatterbox restart failed: {msg}", "warning")
+            return {"ok": False, "error": msg}
+
+        cmd = self._chatterbox_restart_command()
+        self.add_log(f"Chatterbox restart: {cmd}", "info")
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "docker",
+                "restart",
+                container,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60.0)
+        except FileNotFoundError:
+            msg = "docker command not found on PATH"
+            self.add_log(f"Chatterbox restart failed: {msg}", "warning")
+            return {"ok": False, "error": msg}
+        except TimeoutError:
+            msg = f"docker restart {container} timed out after 60s"
+            self.add_log(f"Chatterbox restart failed: {msg}", "warning")
+            return {"ok": False, "error": msg}
+
+        if proc.returncode != 0:
+            detail = (stderr or stdout or b"").decode("utf-8", errors="replace").strip()
+            msg = detail or f"docker restart exited {proc.returncode}"
+            self.add_log(f"Chatterbox restart failed: {msg}", "warning")
+            return {"ok": False, "error": msg, "container": container}
+
+        try:
+            model_payload = await self._wait_for_chatterbox_online(timeout=wait_timeout)
+        except Exception as e:
+            msg = str(e)
+            self.add_log(f"Chatterbox restart: container up but API unreachable — {msg}", "warning")
+            return {
+                "ok": False,
+                "error": msg,
+                "container": container,
+                "restarted": True,
+            }
+
+        loaded_model = str(model_payload.get("repo_id") or "unknown")
+        self.add_log(
+            f"Chatterbox restart: {container} online (model {loaded_model})",
+            "info",
+        )
+        result: dict[str, Any] = {
+            "ok": True,
+            "container": container,
+            "restarted": True,
+            "model": loaded_model,
+            "message": f"Restarted {container}",
+        }
+        if verify:
+            investigate = await self.investigate_tts(test_synthesis=True)
+            result["investigate"] = investigate
+            result["healthy"] = bool(investigate.get("healthy"))
+            inv_msg = str(investigate.get("message") or "").strip()
+            if inv_msg:
+                result["message"] = f"{result['message']} — {inv_msg}"
+        return result
 
     def vote_email_sender(self, email_id: str, *, vote: str) -> dict[str, Any] | None:
         row = self.get_email_for_display(email_id)
@@ -1708,7 +2812,12 @@ class SmartInboxCore:
     def get_spam_ollama_options(self) -> dict[str, Any]:
         from smartinbox.email_spam import build_spam_ollama_options
 
-        return build_spam_ollama_options(main_gpu=self._spam_ollama_main_gpu)
+        # CPU inference — loading a second GPU model evicts qwen2.5vl and crashes Ollama.
+        return build_spam_ollama_options()
+
+    def get_summary_ollama_options(self) -> dict[str, Any]:
+        # main_gpu pin crashes qwen2.5vl on this host — let Ollama pick the device.
+        return build_summary_ollama_options()
 
     def set_spam_ollama_main_gpu(self, value: int | float | str | None) -> int | None:
         if value is None or value == "" or str(value).strip().lower() == "auto":
@@ -1740,7 +2849,7 @@ class SmartInboxCore:
         return self._calendar_ollama_main_gpu
 
     def get_calendar_ollama_options(self) -> dict[str, Any]:
-        return build_calendar_ollama_options(main_gpu=self._calendar_ollama_main_gpu)
+        return build_calendar_ollama_options()
 
     def set_calendar_ollama_main_gpu(self, value: int | float | str | None) -> int | None:
         if value is None or value == "" or str(value).strip().lower() == "auto":
@@ -1769,6 +2878,18 @@ class SmartInboxCore:
         model = self.get_ollama_model()
         options = self.get_calendar_ollama_options()
         gpu = self.get_calendar_ollama_main_gpu()
+        loaded, list_err = await list_loaded_ollama_models(
+            self.get_ollama_base_url(), timeout=8.0
+        )
+        if not list_err and model_matches_listed(
+            model, [str(m.get("name") or "") for m in loaded]
+        ):
+            gpu_note = f" on GPU {gpu}" if gpu is not None else ""
+            self.add_log(
+                f"Calendar: {model} already loaded in Ollama VRAM{gpu_note}",
+                "info",
+            )
+            return
         if gpu is not None:
             self.add_log(
                 f"Calendar: loading {model} on GPU {gpu} for event extraction…",
@@ -1776,17 +2897,67 @@ class SmartInboxCore:
             )
         else:
             self.add_log(f"Calendar: loading {model} for event extraction…", "info")
-        err = await preload_ollama_model(
-            base_url=self.get_ollama_base_url(),
-            model=model,
-            options=options,
-            keep_alive="30m",
-            timeout=self.get_ollama_timeout(),
-        )
+        async with self._ollama_slot():
+            err = await preload_ollama_model(
+                base_url=self.get_ollama_base_url(),
+                model=model,
+                options=options,
+                keep_alive=-1,
+                timeout=self.get_ollama_timeout(),
+            )
         if err:
             self.add_log(f"Calendar Ollama preload failed: {err}", "warning")
         elif gpu is not None:
             self.add_log(f"Calendar: {model} ready on GPU {gpu}", "info")
+
+    async def _startup_ollama_pipeline(self) -> None:
+        """Warm Ollama models, then run summary/calendar backfill without overlapping loads."""
+        if self._demo_mode:
+            return
+        await self._warm_ollama_models()
+        if not self._running:
+            return
+        self._queue_unsummarized_backfill()
+        await self._start_calendar_backfill_when_ready(days=30)
+
+    async def _warm_ollama_models(self) -> None:
+        """Preload the summary/calendar model; spam loads on CPU on first check."""
+        if self._demo_mode:
+            return
+        await self._preload_calendar_ollama_model()
+
+    async def _preload_spam_ollama_model(self) -> None:
+        model = self.get_spam_ollama_model()
+        options = self.get_spam_ollama_options()
+        gpu = self.get_spam_ollama_main_gpu()
+        loaded, list_err = await list_loaded_ollama_models(
+            self.get_ollama_base_url(), timeout=8.0
+        )
+        if not list_err and model_matches_listed(
+            model, [str(m.get("name") or "") for m in loaded]
+        ):
+            gpu_note = f" on GPU {gpu}" if gpu is not None else ""
+            self.add_log(
+                f"Spam: {model} already loaded in Ollama VRAM{gpu_note}",
+                "info",
+            )
+            return
+        if gpu is not None:
+            self.add_log(f"Spam: loading {model} on GPU {gpu}…", "info")
+        else:
+            self.add_log(f"Spam: loading {model} on CPU…", "info")
+        async with self._ollama_slot():
+            err = await preload_ollama_model(
+                base_url=self.get_ollama_base_url(),
+                model=model,
+                options=options,
+                keep_alive=-1,
+                timeout=self.get_ollama_timeout(),
+            )
+        if err:
+            self.add_log(f"Spam Ollama preload failed: {err}", "warning")
+        elif gpu is not None:
+            self.add_log(f"Spam: {model} ready on GPU {gpu}", "info")
 
     def set_calendar_extract_concurrency(self, value: int | float | str) -> int:
         try:
@@ -1958,9 +3129,9 @@ class SmartInboxCore:
                 "No mail accounts connected — add Gmail or Proton in Settings",
                 "warning",
             )
+        await self.poll_inbox()
         self._poll_task = asyncio.create_task(self._poll_loop())
-        self._queue_unsummarized_backfill()
-        self._track_email_task(self._start_calendar_backfill_when_ready(days=30))
+        self._track_email_task(self._startup_ollama_pipeline())
 
     async def stop(self) -> None:
         self._running = False
@@ -1995,11 +3166,11 @@ class SmartInboxCore:
 
     async def _poll_loop(self) -> None:
         while self._running:
+            await asyncio.sleep(self._poll_interval)
             try:
                 await self.poll_inbox()
             except Exception as e:
                 self.add_log(f"Poll error: {e}", "error")
-            await asyncio.sleep(self._poll_interval)
 
     async def poll_inbox(self, *, detailed: bool = False) -> int:
         if self._poll_lock.locked():
@@ -2063,6 +3234,7 @@ class SmartInboxCore:
             acct_ics = 0
             acct_skipped = 0
             skipped_uids: list[str] = []
+            pending_processing: list[tuple[dict[str, Any], str]] = []
             for msg in raw_messages:
                 if not self._email_passes_watermark(msg):
                     skipped_old += 1
@@ -2099,6 +3271,12 @@ class SmartInboxCore:
                     ics_updated_count += 1
                     acct_ics += 1
                 self._log_import_result(msg, result, provider=msg_provider)
+                pending_processing.append((msg, result))
+
+            if pending_processing:
+                self._notify_emails()
+                await asyncio.sleep(0)
+            for msg, result in pending_processing:
                 self._queue_stored_mail_processing(msg, result)
 
             if detailed:
@@ -2199,51 +3377,109 @@ class SmartInboxCore:
         allow_alert: bool = True,
         queue_summary: bool = True,
     ) -> None:
+        """Queue LLM follow-up for stored mail. Call _notify_emails() before this."""
         if self._demo_mode:
             return
         stored = dict(msg)
         if upsert_result == "ics_updated":
             self._track_email_task(self._process_new_email_calendar(stored))
-        elif upsert_result == "new":
-            self._notify_emails()
-            if queue_summary:
-                self._track_email_task(
-                    self._process_new_email(stored, allow_alert=allow_alert)
-                )
+        elif upsert_result == "new" and queue_summary:
+            self._track_email_task(
+                self._process_new_email(stored, allow_alert=allow_alert)
+            )
 
     def _queue_unsummarized_backfill(self, *, limit: int = 500) -> int:
         """Start (or continue) sequential backfill for mail missing a summary."""
         if self._demo_mode:
             return 0
+        started = self._start_summary_backfill(limit=limit)
+        if not started:
+            return 0
+        return int(self._summary_backfill.get("total") or 0)
+
+    def _start_summary_backfill(
+        self,
+        *,
+        since_ts: float | None = None,
+        lookback: int | None = None,
+        unit: str | None = None,
+        limit: int = 500,
+    ) -> bool:
+        """Start sequential summary backfill for pending mail in an optional window."""
+        if self._demo_mode:
+            return False
         if self._summary_backfill_task and not self._summary_backfill_task.done():
-            return 0
-        rows = list_unsummarized_emails(self._conn, limit=limit)
-        if not rows:
-            return 0
+            return False
+        scan_since = 0.0 if since_ts is None else since_ts
+        pending = list_emails_for_summary_scan(
+            self._conn,
+            since_ts=scan_since,
+            pending_only=True,
+            limit=limit,
+        )
+        if not pending:
+            return False
+        total = len(pending)
+        self._summary_backfill = {
+            "running": True,
+            "done": 0,
+            "total": total,
+            "lookback": lookback,
+            "unit": unit,
+            "days": lookback if unit == "days" else None,
+            "hours": lookback if unit == "hours" else None,
+        }
         self.add_log(
-            f"Summary backfill: queuing {len(rows)} unsummarized message"
-            f"{'s' if len(rows) != 1 else ''}",
+            f"Summary backfill: queuing {total} unsummarized message"
+            f"{'s' if total != 1 else ''}",
             "info",
         )
         self._summary_backfill_task = asyncio.create_task(
-            self._run_summary_backfill(limit=limit)
+            self._run_summary_backfill(since_ts=since_ts, limit=limit)
         )
         self._email_tasks.add(self._summary_backfill_task)
         self._summary_backfill_task.add_done_callback(self._email_tasks.discard)
-        return len(rows)
+        return True
 
-    async def _run_summary_backfill(self, *, limit: int = 500) -> None:
+    async def _run_summary_backfill(
+        self,
+        *,
+        since_ts: float | None = None,
+        limit: int = 500,
+    ) -> None:
         """Process unsummarized mail one at a time so Ollama is not flooded."""
+        scan_since = 0.0 if since_ts is None else since_ts
         try:
             processed = 0
             while self._running and processed < limit:
-                rows = list_unsummarized_emails(self._conn, limit=1)
+                rows = list_emails_for_summary_scan(
+                    self._conn,
+                    since_ts=scan_since,
+                    pending_only=True,
+                    limit=1,
+                )
                 if not rows:
                     break
-                await self._process_new_email(rows[0], allow_alert=False)
+                row = rows[0]
+                email_id = str(row.get("id") or "")
+                await self._process_new_email(row, allow_alert=False)
                 processed += 1
+                self._summary_backfill["done"] = processed
+                if email_id:
+                    updated = get_email(self._conn, email_id)
+                    if updated and not str(
+                        updated.get("summary_detailed") or ""
+                    ).strip():
+                        await asyncio.sleep(15)
             if processed:
-                remaining = len(list_unsummarized_emails(self._conn, limit=limit))
+                remaining = len(
+                    list_emails_for_summary_scan(
+                        self._conn,
+                        since_ts=scan_since,
+                        pending_only=True,
+                        limit=limit,
+                    )
+                )
                 if remaining:
                     self.add_log(
                         f"Summary backfill: {processed} processed, {remaining} still pending",
@@ -2259,6 +3495,17 @@ class SmartInboxCore:
             raise
         except Exception as e:
             self.add_log(f"Summary backfill failed: {e}", "error")
+        finally:
+            snap = dict(self._summary_backfill)
+            self._summary_backfill = {
+                "running": False,
+                "done": snap.get("done", 0),
+                "total": snap.get("total", 0),
+                "lookback": snap.get("lookback"),
+                "unit": snap.get("unit"),
+                "days": snap.get("days"),
+                "hours": snap.get("hours"),
+            }
 
     async def _process_new_email_calendar(
         self, msg: dict[str, Any], *, except_email_id: str | None = None
@@ -2289,21 +3536,31 @@ class SmartInboxCore:
         email_id = str(msg.get("id") or "")
         if not email_id:
             return None
+        sender = str(msg.get("sender") or "")
         subject = self._log_subject(str(msg.get("subject") or "(no subject)"))
+        if is_sender_downvoted(self._conn, sender):
+            self.add_log(
+                f"Spam check skipped — downvoted sender — {subject}",
+                "info",
+            )
+            return False
         spam_model = self.get_spam_ollama_model()
-        is_spam, err = await classify_email_spam(
-            base_url=self.get_ollama_base_url(),
-            model=spam_model,
-            sender=str(msg.get("sender") or ""),
-            subject=str(msg.get("subject") or ""),
-            body=str(msg.get("body_text") or msg.get("snippet") or ""),
-            summary=str(
-                msg.get("summary_detailed") or msg.get("summary_short") or ""
-            ).strip()
-            or None,
-            ollama_options=self.get_spam_ollama_options(),
-            timeout=self.get_ollama_timeout(),
-        )
+        t0 = time.monotonic()
+        async with self._ollama_slot():
+            is_spam, err = await classify_email_spam(
+                base_url=self.get_ollama_base_url(),
+                model=spam_model,
+                sender=sender,
+                subject=str(msg.get("subject") or ""),
+                body=str(msg.get("body_text") or msg.get("snippet") or ""),
+                summary=str(
+                    msg.get("summary_detailed") or msg.get("summary_short") or ""
+                ).strip()
+                or None,
+                ollama_options=self.get_spam_ollama_options(),
+                timeout=self.get_ollama_timeout(),
+            )
+        self._record_llm_timing("spam", time.monotonic() - t0, success=err is None)
         if err:
             self.add_log(
                 f"Spam check failed for {subject} (voice alert allowed): {err}",
@@ -2312,8 +3569,7 @@ class SmartInboxCore:
             return None
         update_email_spam(self._conn, email_id, is_spam=bool(is_spam))
         msg["is_spam"] = 1 if is_spam else 0
-        gpu = self.get_spam_ollama_main_gpu()
-        gpu_note = f", GPU {gpu}" if gpu is not None else ""
+        gpu_note = ", CPU"
         if is_spam:
             self.add_log(
                 f"Spam check: junk — no voice alert for {subject} ({spam_model}{gpu_note})",
@@ -2335,14 +3591,22 @@ class SmartInboxCore:
             async with self._email_summary_semaphore:
                 self._summary_in_flight += 1
                 try:
-                    summary, err = await summarize_email(
-                        base_url=self.get_ollama_base_url(),
-                        model=self.get_ollama_model(),
-                        sender=str(msg.get("sender") or ""),
-                        subject=str(msg.get("subject") or ""),
-                        body=str(msg.get("body_text") or msg.get("snippet") or ""),
-                        system_prompt=self._summary_system_prompt,
-                        timeout=self.get_ollama_timeout(),
+                    t0 = time.monotonic()
+                    async with self._ollama_slot():
+                        summary, err = await summarize_email(
+                            base_url=self.get_ollama_base_url(),
+                            model=self.get_ollama_model(),
+                            sender=str(msg.get("sender") or ""),
+                            subject=str(msg.get("subject") or ""),
+                            body=str(msg.get("body_text") or msg.get("snippet") or ""),
+                            system_prompt=self._summary_system_prompt,
+                            timeout=self.get_ollama_timeout(),
+                            ollama_options=self.get_summary_ollama_options(),
+                        )
+                    self._record_llm_timing(
+                        "summary",
+                        time.monotonic() - t0,
+                        success=bool(summary),
                     )
                 finally:
                     self._summary_in_flight -= 1
@@ -2359,8 +3623,12 @@ class SmartInboxCore:
                     self._notify_emails()
                 elif err:
                     self.add_log(f"Summary failed: {err}", "warning")
+                    if "500" in str(err) or "terminated" in str(err).lower():
+                        await asyncio.sleep(15)
 
-            is_spam = await self._classify_email_spam(msg)
+            is_spam = None
+            if summary:
+                is_spam = await self._classify_email_spam(msg)
             if is_spam:
                 return
 
@@ -2376,6 +3644,8 @@ class SmartInboxCore:
     def _should_alert_for_sender(self, sender: str | None, now: float) -> tuple[bool, str]:
         if not self._alerts_enabled:
             return False, "alerts disabled"
+        if is_sender_downvoted(self._conn, sender):
+            return False, "downvoted sender"
         if is_sender_muted(self._conn, sender):
             return False, "sender score too low (muted)"
         important = is_important_sender(self._conn, sender)
@@ -2441,7 +3711,8 @@ class SmartInboxCore:
             ).strip()
             if summary_source:
                 await self._wait_for_summary_priority(
-                    except_email_id=str(msg.get("id") or "") or None
+                    except_email_id=str(msg.get("id") or "") or None,
+                    wait_for_backlog=False,
                 )
                 llm_user_message = brief_summary_for_tts(summary_source)
                 debug.update(
@@ -2456,13 +3727,14 @@ class SmartInboxCore:
                         ),
                     }
                 )
-                styled, style_err = await style_summary_for_voice(
-                    base_url=self.get_ollama_base_url(),
-                    model=self.get_ollama_model(),
-                    summary=summary_source,
-                    system_prompt=style_prompt,
-                    timeout=self.get_ollama_timeout(),
-                )
+                async with self._ollama_slot():
+                    styled, style_err = await style_summary_for_voice(
+                        base_url=self.get_ollama_base_url(),
+                        model=self.get_ollama_model(),
+                        summary=summary_source,
+                        system_prompt=style_prompt,
+                        timeout=self.get_ollama_timeout(),
+                    )
                 debug["llm_response"] = styled
                 debug["llm_error"] = style_err
                 if styled:
@@ -2797,9 +4069,6 @@ class SmartInboxCore:
     async def _build_alert(self, msg: dict[str, Any]) -> dict[str, Any] | None:
         if self._demo_mode:
             return None
-        await self._wait_for_summary_priority(
-            except_email_id=str(msg.get("id") or "") or None
-        )
         if not self.chatterbox_tts_config.get("enabled"):
             return None
         if not self._email_passes_watermark(msg):
@@ -2848,15 +4117,17 @@ class SmartInboxCore:
         row = self.get_email_for_display(email_id)
         if not row:
             return None, "Email not found"
-        return await summarize_email(
-            base_url=self.get_ollama_base_url(),
-            model=self.get_ollama_model(),
-            sender=str(row.get("sender") or ""),
-            subject=str(row.get("subject") or ""),
-            body=str(row.get("body_text") or row.get("snippet") or ""),
-            system_prompt=self._summary_system_prompt,
-            timeout=self.get_ollama_timeout(),
-        )
+        async with self._ollama_slot():
+            return await summarize_email(
+                base_url=self.get_ollama_base_url(),
+                model=self.get_ollama_model(),
+                sender=str(row.get("sender") or ""),
+                subject=str(row.get("subject") or ""),
+                body=str(row.get("body_text") or row.get("snippet") or ""),
+                system_prompt=self._summary_system_prompt,
+                timeout=self.get_ollama_timeout(),
+                ollama_options=self.get_summary_ollama_options(),
+            )
 
     async def get_llm_state(self) -> dict[str, Any]:
         base_url = self.get_ollama_base_url()

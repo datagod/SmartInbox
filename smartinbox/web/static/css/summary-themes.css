@@ -6885,3 +6885,472 @@
 .theme-computer50s .summary-body.summary-error p::before {
   display: none;
 }
+
+/* --- Triple Planets (Twin Galaxies arcade scoreboard) --- */
+.tp-panel-header,
+.tp-panel-footer {
+  display: none;
+}
+
+.summary-crt-chassis:has(.theme-tripleplanets) {
+  background:
+    linear-gradient(180deg, #1a1a22 0%, #0c0c10 55%, #060608 100%);
+  border-radius: 4px;
+  padding: 0.5rem 0.65rem 0.45rem;
+  box-shadow:
+    inset 0 0 0 2px #2a2a34,
+    inset 0 0 0 4px #000,
+    0 10px 28px rgba(0, 0, 0, 0.7);
+  border: 2px solid #c9a227;
+}
+
+.summary-crt-chassis:has(.theme-tripleplanets) .crt-bezel-top,
+.summary-crt-chassis:has(.theme-tripleplanets) .crt-bezel-bottom {
+  background: linear-gradient(180deg, #22222c 0%, #101014 100%);
+  border-top: 2px solid #c9a227;
+  border-bottom: 2px solid #8b1a1a;
+}
+
+.summary-crt-chassis:has(.theme-tripleplanets) .crt-nameplate {
+  border: 1px solid #3a3a48;
+  background: linear-gradient(180deg, #1e1e28, #101014);
+  box-shadow: inset 0 1px 0 rgba(255, 215, 80, 0.08);
+}
+
+.summary-crt-chassis:has(.theme-tripleplanets) .crt-sony {
+  font-size: 0;
+}
+
+.summary-crt-chassis:has(.theme-tripleplanets) .crt-sony::after {
+  content: 'SCOREBOARD';
+  font-family: Antonio, 'Arial Narrow', sans-serif;
+  font-size: 0.52rem;
+  font-weight: 700;
+  color: #e8c040;
+  letter-spacing: 0.2em;
+}
+
+.summary-crt-chassis:has(.theme-tripleplanets) .crt-rgb-r { background: #c62828; }
+.summary-crt-chassis:has(.theme-tripleplanets) .crt-rgb-g { background: #c9a227; }
+.summary-crt-chassis:has(.theme-tripleplanets) .crt-rgb-b { background: #4a7eb8; }
+
+.summary-crt-chassis:has(.theme-tripleplanets) .crt-power-led {
+  background: #e8c040;
+  box-shadow: 0 0 8px rgba(232, 192, 64, 0.85);
+  animation: tp-live-pulse 2s ease-in-out infinite;
+}
+
+@keyframes tp-live-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+.summary-crt-chassis:has(.theme-tripleplanets) .crt-power-label {
+  color: #a89868;
+  font-family: Antonio, sans-serif;
+  letter-spacing: 0.12em;
+}
+
+.summary-crt-chassis:has(.theme-tripleplanets) .crt-screen-well {
+  border: 2px solid #000;
+  box-shadow: inset 0 0 24px rgba(0, 0, 0, 0.85);
+}
+
+.summary-viewport.theme-tripleplanets {
+  display: flex;
+  flex-direction: column;
+  border: none;
+  border-radius: 2px;
+  background: #08080c;
+  padding: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.summary-viewport.theme-tripleplanets::before {
+  content: '';
+  position: absolute;
+  inset: -40%;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(ellipse 52vmin 52vmin at 14% 28%, rgba(232, 184, 48, 0.38), transparent 62%),
+    radial-gradient(ellipse 44vmin 44vmin at 86% 72%, rgba(74, 126, 184, 0.42), transparent 62%),
+    radial-gradient(ellipse 120% 90% at 50% 110%, rgba(20, 30, 60, 0.55), transparent 58%),
+    radial-gradient(ellipse 90% 70% at 50% -20%, rgba(74, 126, 184, 0.14), transparent 55%),
+    radial-gradient(ellipse 2px 2px at 18% 12%, rgba(255, 255, 255, 0.5), transparent),
+    radial-gradient(ellipse 2px 2px at 72% 38%, rgba(255, 255, 255, 0.35), transparent),
+    radial-gradient(ellipse 2px 2px at 38% 82%, rgba(255, 255, 255, 0.3), transparent),
+    #06060a;
+  opacity: 1;
+}
+
+.summary-viewport.theme-tripleplanets::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.04) 2px,
+    rgba(0, 0, 0, 0.04) 4px
+  );
+}
+
+.theme-tripleplanets .tp-panel-header,
+.theme-tripleplanets .tp-panel-footer {
+  display: block;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 1;
+}
+
+.theme-tripleplanets .tp-stripe {
+  height: 4px;
+  background: linear-gradient(
+    90deg,
+    #8b1a1a 0%,
+    #c62828 18%,
+    #e8c040 50%,
+    #c62828 82%,
+    #8b1a1a 100%
+  );
+  box-shadow: 0 1px 0 rgba(255, 215, 80, 0.35);
+}
+
+.theme-tripleplanets .tp-stripe-bottom {
+  margin-top: 0;
+}
+
+.theme-tripleplanets .tp-panel-header {
+  padding: 0.55rem 0.75rem 0.45rem;
+  background:
+    linear-gradient(180deg, #14141c 0%, #0a0a0e 100%);
+  border-bottom: 1px solid #2a2a38;
+}
+
+.theme-tripleplanets .tp-lockup {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin: 0.45rem 0 0.35rem;
+}
+
+.theme-tripleplanets .tp-planets {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-shrink: 0;
+}
+
+.theme-tripleplanets .tp-planet {
+  display: block;
+  width: 2.65rem;
+  height: 2.65rem;
+  border-radius: 50%;
+  box-shadow:
+    inset -4px -6px 12px rgba(0, 0, 0, 0.5),
+    0 0 18px rgba(255, 255, 255, 0.14);
+}
+
+.theme-tripleplanets .tp-planet-gold {
+  background:
+    radial-gradient(circle at 32% 28%, #fff4c0, #e8b830 42%, #a87818 100%);
+}
+
+.theme-tripleplanets .tp-planet-blue {
+  background:
+    radial-gradient(circle at 32% 28%, #b8d8ff, #4a7eb8 42%, #1a3868 100%);
+  width: 2.35rem;
+  height: 2.35rem;
+}
+
+.theme-tripleplanets .tp-corp {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  min-width: 0;
+}
+
+.theme-tripleplanets .tp-name {
+  font-family: Antonio, 'Arial Narrow', sans-serif;
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: #f0c848;
+  text-shadow:
+    0 0 12px rgba(240, 200, 72, 0.35),
+    0 1px 0 #000;
+  line-height: 1.1;
+}
+
+.theme-tripleplanets .tp-sub {
+  font-family: 'Share Tech Mono', var(--mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.06em;
+  color: #9898a8;
+  text-transform: uppercase;
+}
+
+.theme-tripleplanets .tp-sys-line,
+.theme-tripleplanets .tp-footer-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.45rem;
+  font-family: 'Share Tech Mono', var(--mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.theme-tripleplanets .tp-sys-line {
+  padding-top: 0.2rem;
+  border-top: 1px solid #222230;
+}
+
+.theme-tripleplanets .tp-bright {
+  color: #f0c848;
+  font-weight: 700;
+}
+
+.theme-tripleplanets .tp-sys {
+  color: #c0c0cc;
+}
+
+.theme-tripleplanets .tp-live {
+  color: #e05050;
+  font-weight: 700;
+  animation: tp-live-pulse 2s ease-in-out infinite;
+}
+
+.theme-tripleplanets .tp-dim {
+  color: #686878;
+}
+
+.theme-tripleplanets .tp-sep {
+  color: #484858;
+}
+
+.theme-tripleplanets .tp-panel-footer {
+  padding: 0.4rem 0.75rem 0;
+  background: linear-gradient(180deg, #0a0a0e 0%, #060608 100%);
+  border-top: 1px solid #222230;
+}
+
+.theme-tripleplanets .tp-footer-line {
+  padding-bottom: 0.4rem;
+}
+
+.theme-tripleplanets .summary-body {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-height: 0;
+  background:
+    linear-gradient(180deg, rgba(20, 20, 28, 0.72) 0%, rgba(8, 8, 12, 0.82) 100%);
+  color: #d8d8e0;
+  padding: 0.7rem 0.75rem 0.8rem;
+  font-family: 'Share Tech Mono', var(--mono);
+  font-size: 0.76rem;
+  line-height: 1.55;
+  letter-spacing: 0.02em;
+}
+
+.theme-tripleplanets .summary-body::before {
+  content: 'RANK  PLAYER  SCORE  DATE';
+  display: block;
+  font-family: Antonio, sans-serif;
+  font-size: 0.52rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #08080c;
+  background: linear-gradient(180deg, #e8c040 0%, #c9a227 100%);
+  padding: 0.35rem 0.55rem;
+  margin: 0 0 0.55rem;
+  border: 1px solid #a87818;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+.theme-tripleplanets .summary-body::after {
+  content: 'END OF LEADERBOARD — SUBMIT SCORE';
+  display: block;
+  margin-top: 0.75rem;
+  padding: 0.35rem 0.55rem;
+  text-align: center;
+  font-family: Antonio, sans-serif;
+  font-size: 0.5rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: #9898a8;
+  border: 1px dashed #3a3a48;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.theme-tripleplanets .markdown-body h2 {
+  color: #f0c848;
+  font-family: Antonio, sans-serif;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  margin: 1rem 0 0.4rem;
+  padding: 0.35rem 0.5rem;
+  background: linear-gradient(90deg, rgba(198, 40, 40, 0.35), rgba(201, 162, 39, 0.2) 50%, transparent);
+  border-left: 3px solid #c62828;
+  border-bottom: 1px solid #2a2a38;
+}
+
+.theme-tripleplanets .markdown-body h2:first-child {
+  margin-top: 0;
+}
+
+.theme-tripleplanets .markdown-body h2::before {
+  content: '▶ ';
+  color: #c62828;
+}
+
+.theme-tripleplanets .markdown-body h3 {
+  color: #8ab4e8;
+  font-family: Antonio, sans-serif;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin: 0.75rem 0 0.3rem;
+}
+
+.theme-tripleplanets .markdown-body h3::before {
+  content: '◇ ';
+  color: #c9a227;
+}
+
+.theme-tripleplanets .markdown-body p {
+  margin: 0.4rem 0;
+  padding: 0.3rem 0.45rem;
+  background: rgba(255, 255, 255, 0.02);
+  border-bottom: 1px solid rgba(42, 42, 56, 0.6);
+}
+
+.theme-tripleplanets .markdown-body p:nth-of-type(even) {
+  background: rgba(201, 162, 39, 0.04);
+}
+
+.theme-tripleplanets .markdown-body strong {
+  color: #f0c848;
+  font-weight: 700;
+}
+
+.theme-tripleplanets .markdown-body em {
+  color: #e8a0a0;
+  font-style: normal;
+}
+
+.theme-tripleplanets .markdown-body code {
+  font-family: 'Share Tech Mono', var(--mono);
+  font-size: 0.88em;
+  background: rgba(74, 126, 184, 0.15);
+  color: #8ab4e8;
+  border: 1px solid #3a5080;
+  padding: 0.1rem 0.3rem;
+}
+
+.theme-tripleplanets .markdown-body ul {
+  list-style: none;
+  margin: 0.35rem 0 0.55rem;
+  padding: 0;
+  border: 1px solid #2a2a38;
+}
+
+.theme-tripleplanets .markdown-body ul li {
+  margin: 0;
+  padding: 0.32rem 0.45rem 0.32rem 1.6rem;
+  position: relative;
+  border-bottom: 1px solid rgba(42, 42, 56, 0.5);
+}
+
+.theme-tripleplanets .markdown-body ul li:nth-child(odd) {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.theme-tripleplanets .markdown-body ul li:nth-child(even) {
+  background: rgba(201, 162, 39, 0.05);
+}
+
+.theme-tripleplanets .markdown-body ul li::before {
+  content: '★';
+  position: absolute;
+  left: 0.45rem;
+  color: #c9a227;
+  font-size: 0.65rem;
+}
+
+.theme-tripleplanets .markdown-body ol {
+  margin: 0.35rem 0 0.55rem 1.1rem;
+  padding: 0;
+}
+
+.theme-tripleplanets .markdown-body ol li {
+  margin: 0.28rem 0;
+  padding-left: 0.2rem;
+}
+
+.theme-tripleplanets .markdown-body ol li::marker {
+  color: #c62828;
+  font-family: Antonio, sans-serif;
+  font-weight: 700;
+}
+
+.theme-tripleplanets .summary-from {
+  color: #9898a8;
+  border-bottom-color: #2a2a38;
+  font-family: 'Share Tech Mono', var(--mono);
+}
+
+.theme-tripleplanets .summary-empty {
+  color: #686878;
+  font-style: normal;
+}
+
+.theme-tripleplanets .summary-body.summary-loading::before,
+.theme-tripleplanets .summary-body.summary-error::before {
+  content: 'LOADING SCOREBOARD DATA...';
+  color: #08080c;
+  background: linear-gradient(180deg, #e8c040, #c9a227);
+  animation: tp-live-pulse 1.2s ease-in-out infinite;
+}
+
+.theme-tripleplanets .summary-body.summary-error::before {
+  content: 'SCORE REJECTED — VERIFICATION FAILED';
+  background: linear-gradient(180deg, #e05050, #c62828);
+  color: #fff;
+}
+
+.theme-tripleplanets .summary-body.summary-loading::after,
+.theme-tripleplanets .summary-body.summary-error::after {
+  content: 'PLEASE WAIT — OFFICIAL REVIEW IN PROGRESS';
+  color: #9898a8;
+}
+
+.theme-tripleplanets .summary-body.summary-error::after {
+  content: 'RESUBMIT WITH COMPLETE TAPE WITNESS';
+  color: #e05050;
+}
+
+.theme-tripleplanets .summary-body.summary-loading,
+.theme-tripleplanets .summary-body.summary-error {
+  justify-content: flex-start;
+  color: #d8d8e0;
+}
+
+.theme-tripleplanets .summary-body.summary-error {
+  color: #e8a0a0;
+}
+
+.theme-tripleplanets .summary-body.summary-loading .markdown-body,
+.theme-tripleplanets .summary-body.summary-error .markdown-body {
+  display: none;
+}

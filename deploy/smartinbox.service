@@ -1,0 +1,16 @@
+[Unit]
+Description=SmartInbox — Gmail summaries and voice alerts
+Documentation=https://github.com/datagod/SmartInbox
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/bill/SmartInbox
+ExecStart=/home/bill/SmartInbox/.venv/bin/smartinbox
+Restart=on-failure
+RestartSec=5
+# host/port come from config.yaml (default 127.0.0.1:8090)
+
+[Install]
+WantedBy=default.target

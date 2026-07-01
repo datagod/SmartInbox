@@ -48,6 +48,7 @@ def chatterbox_settings_from_config(raw: dict[str, Any] | None) -> dict[str, Any
         ).strip()
         or "Person detected on driveway.",
         "cache_dir": str(cfg.get("cache_dir", "localrecordings")).strip() or "localrecordings",
+        "docker_container": str(cfg.get("docker_container", "")).strip(),
         "event_alerts": bool(cfg.get("event_alerts", False)),
         "timeline_alerts": bool(cfg.get("timeline_alerts", cfg.get("event_alerts", False))),
         "alert_cooldown": max(

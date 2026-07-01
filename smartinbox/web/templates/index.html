@@ -4,13 +4,17 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SmartInbox</title>
-  <link rel="stylesheet" href="/static/css/styles.css?v=22">
-  <link rel="stylesheet" href="/static/css/summary-themes.css?v=31">
+  <link rel="icon" href="/static/img/smartinbox-icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/css/styles.css?v=23">
+  <link rel="stylesheet" href="/static/css/summary-themes.css?v=33">
 </head>
 <body>
   <div class="app">
     <header class="header">
-      <h1>SmartInbox</h1>
+      <h1 class="brand-title">
+        <img src="/static/img/smartinbox-icon.svg" alt="" class="brand-icon" width="32" height="32">
+        SmartInbox
+      </h1>
       <p class="subtitle">Gmail IMAP summaries with Ollama and Chatterbox voice alerts</p>
       <nav class="site-nav" aria-label="Site">
         <a href="/" aria-current="page">Inbox</a>
@@ -20,7 +24,7 @@
         <a href="/phrases">Phrases</a>
         <a href="/senders">Senders</a>
         <a href="/calendar">Calendar</a>
-        <a href="/process">Process</a>
+        <a href="/pipelines">Pipelines</a>
         <a href="/storage">Storage</a>
       </nav>
       <div class="header-meta">
@@ -58,35 +62,7 @@
           </div>
           <label class="summary-theme-picker">
             <span>Theme</span>
-            <select class="summary-theme-select" id="summary-theme" aria-label="Summary display theme">
-              <option value="modern">Modern display</option>
-              <option value="ansi">ANSI color terminal</option>
-              <option value="arcade">Retro arcade CRT</option>
-              <option value="phosphor">Green phosphor CRT</option>
-              <option value="amber">Amber terminal</option>
-              <option value="typewriter">Typewriter</option>
-              <option value="teleprinter">Line printer</option>
-              <option value="dotmatrix">80s dot matrix printer</option>
-              <option value="newsprint">Newsprint</option>
-              <option value="solarized">Solarized</option>
-              <option value="blueprint">Blueprint</option>
-              <option value="mainframe">1970s mainframe</option>
-              <option value="pdp11">PDP-11 terminal</option>
-              <option value="mailcraft">MailCraft</option>
-              <option value="mailtrek">Mail Trek (LCARS)</option>
-              <option value="weylandyutani">Weyland-Yutani Corp</option>
-              <option value="reddwarf">Red Dwarf</option>
-              <option value="empire">Galactic Empire</option>
-              <option value="kawaiimail">Kawaii Mail</option>
-              <option value="nasa70s">NASA Mission Control</option>
-              <option value="pacmail">PacMail</option>
-              <option value="lsmail">Leisure Suit Mailman</option>
-              <option value="c64">Commodore 64</option>
-              <option value="macintosh">Macintosh</option>
-              <option value="dune1984">Dune 1984</option>
-              <option value="logansrun">Logan's Run</option>
-              <option value="computer50s">Early 1950s computer</option>
-            </select>
+            <select class="summary-theme-select" id="summary-theme" aria-label="Summary display theme"></select>
           </label>
         </div>
         <div class="summary-crt-chassis" id="summary-crt-chassis">
@@ -213,6 +189,26 @@
               <span class="dune-sys">ORNITHOPTER NET 84</span>
               <span class="dune-sep">◆</span>
               <span class="dune-spice">SPICE MUST FLOW</span>
+            </div>
+          </div>
+          <div class="tp-panel-header" aria-hidden="true">
+            <div class="tp-stripe"></div>
+            <div class="tp-lockup">
+              <div class="tp-planets" aria-hidden="true">
+                <span class="tp-planet tp-planet-gold"></span>
+                <span class="tp-planet tp-planet-blue"></span>
+              </div>
+              <div class="tp-corp">
+                <span class="tp-name">TRIPLE PLANETS</span>
+                <span class="tp-sub">Official Inbox Scoreboard · Mail Verification</span>
+              </div>
+            </div>
+            <div class="tp-sys-line">
+              <span class="tp-bright">WORLD RECORDS</span>
+              <span class="tp-sep">|</span>
+              <span class="tp-sys">ARCADE MAIL DIVISION</span>
+              <span class="tp-sep">|</span>
+              <span class="tp-live">● LIVE FEED</span>
             </div>
           </div>
           <div class="empire-terminal-header" aria-hidden="true">
@@ -349,6 +345,16 @@
               <span class="dune-bright">THE SLEEPER MUST AWAKEN</span>
             </div>
             <div class="dune-spice-stripe dune-spice-stripe-bottom"></div>
+          </div>
+          <div class="tp-panel-footer" aria-hidden="true">
+            <div class="tp-footer-line">
+              <span class="tp-dim">SCORE SUBMITTED</span>
+              <span class="tp-sep">|</span>
+              <span class="tp-bright">VERIFIED · OFFICIAL STANDARDS</span>
+              <span class="tp-sep">|</span>
+              <span class="tp-dim">TRIPLE PLANETS ©</span>
+            </div>
+            <div class="tp-stripe tp-stripe-bottom"></div>
           </div>
           <div class="empire-terminal-footer" aria-hidden="true">
             <div class="imp-footer-line">
@@ -489,7 +495,8 @@
       </section>
     </main>
   </div>
+  <script src="/static/js/alerts.js?v=1"></script>
   <script src="/static/js/markdown.js?v=2"></script>
-  <script src="/static/js/app.js?v=49"></script>
+  <script src="/static/js/app.js?v=52"></script>
 </body>
 </html>

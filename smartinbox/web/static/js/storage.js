@@ -88,7 +88,7 @@
     const total = stats.total_emails || 0;
     if (!rows.length) {
       storageSourceTbody.innerHTML =
-        '<tr><td colspan="4" class="storage-empty">No stored emails yet. Use Process to fetch mail.</td></tr>';
+        '<tr><td colspan="4" class="storage-empty">No stored emails yet. Use Pipelines to fetch mail.</td></tr>';
       return;
     }
     storageSourceTbody.innerHTML = rows

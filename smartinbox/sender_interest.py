@@ -50,6 +50,12 @@ def is_sender_muted(conn: sqlite3.Connection, sender: str | None) -> bool:
     return entry is not None and int(entry["score"]) <= MUTED_SCORE_THRESHOLD
 
 
+def is_sender_downvoted(conn: sqlite3.Connection, sender: str | None) -> bool:
+    """True when a sender has more downvotes than upvotes (inbox junk styling)."""
+    entry = get_sender_interest(conn, sender)
+    return entry is not None and int(entry["score"]) < 0
+
+
 def get_sender_interest(conn: sqlite3.Connection, sender: str | None) -> dict[str, Any] | None:
     key = normalize_sender(sender)
     if not key:

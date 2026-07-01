@@ -21,6 +21,7 @@ ollama:
 chatterbox_tts:
   enabled: true
   base_url: http://127.0.0.1:8004
+  docker_container: chatterbox-tts-server-cu128   # optional; enables Pipelines → Restart Chatterbox
   voice_mode: clone
   reference_audio_filename: reference.wav   # MP3/WAV in Chatterbox reference-audio directory
   predefined_voice_id: ""

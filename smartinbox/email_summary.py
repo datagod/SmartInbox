@@ -22,9 +22,12 @@ yes or no, and one short line explaining what to do if yes.
 Do not add other top-level sections. Do not repeat these instructions in the output."""
 
 
-def build_summary_ollama_options() -> dict[str, Any]:
+def build_summary_ollama_options(*, main_gpu: int | None = None) -> dict[str, Any]:
     """Ollama runtime options for email summaries (see Ollama API `options`)."""
-    return {"num_predict": 2048}
+    opts: dict[str, Any] = {"num_predict": 2048, "num_gpu": -1}
+    if main_gpu is not None:
+        opts["main_gpu"] = int(main_gpu)
+    return opts
 
 
 def default_system_prompt() -> str:
@@ -67,6 +70,8 @@ async def summarize_email(
     body: str,
     system_prompt: str | None = None,
     timeout: float = 120.0,
+    ollama_options: dict[str, Any] | None = None,
+    keep_alive: str | int = -1,
 ) -> tuple[str | None, str | None]:
     """Call Ollama /api/chat. Returns (markdown, error)."""
     url = f"{base_url.rstrip('/')}/api/chat"
@@ -77,7 +82,8 @@ async def summarize_email(
             {"role": "user", "content": build_prompt(sender, subject, body)},
         ],
         "stream": False,
-        "options": build_summary_ollama_options(),
+        "keep_alive": keep_alive,
+        "options": ollama_options or build_summary_ollama_options(),
     }
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:

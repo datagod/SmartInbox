@@ -93,7 +93,26 @@ def is_email_extracted(conn: sqlite3.Connection, email_id: str) -> bool:
 def email_calendar_needs_extraction(conn: sqlite3.Connection, email_id: str) -> bool:
     """True when mail was never scanned, or a prior scan found zero events."""
     count = calendar_extraction_event_count(conn, email_id)
-    return count is None or count == 0
+    if count is None:
+        return True
+    if count == CALENDAR_QUEUE_SKIP_EVENT_COUNT:
+        return False
+    return count == 0
+
+
+CALENDAR_QUEUE_SKIP_EVENT_COUNT = -1
+
+
+def skip_calendar_backlog_for_emails(
+    conn: sqlite3.Connection, email_ids: list[str]
+) -> None:
+    """Mark pending mail as calendar-processed so it leaves the extraction queue."""
+    for email_id in email_ids:
+        mark_email_extracted(
+            conn,
+            str(email_id),
+            event_count=CALENDAR_QUEUE_SKIP_EVENT_COUNT,
+        )
 
 
 def mark_email_extracted(
@@ -110,6 +129,38 @@ def mark_email_extracted(
         (email_id, time.time(), int(event_count)),
     )
     conn.commit()
+
+
+def count_emails_pending_calendar_extraction(
+    conn: sqlite3.Connection, *, since_ts: float
+) -> int:
+    """Mail in the window that has never been calendar-scanned."""
+    row = conn.execute(
+        """
+        SELECT COUNT(*) FROM emails e
+        LEFT JOIN calendar_extraction_log l ON l.email_id = e.id
+        WHERE COALESCE(e.received_at, e.created_at) >= ?
+          AND l.email_id IS NULL
+        """,
+        (since_ts,),
+    ).fetchone()
+    return int(row[0]) if row else 0
+
+
+def count_calendar_scanned_no_events(
+    conn: sqlite3.Connection, *, since_ts: float
+) -> int:
+    """Mail scanned with zero events — not in the queue, but eligible for re-process."""
+    row = conn.execute(
+        """
+        SELECT COUNT(*) FROM emails e
+        INNER JOIN calendar_extraction_log l ON l.email_id = e.id
+        WHERE COALESCE(e.received_at, e.created_at) >= ?
+          AND l.event_count = 0
+        """,
+        (since_ts,),
+    ).fetchone()
+    return int(row[0]) if row else 0
 
 
 def list_emails_pending_extraction(
@@ -131,7 +182,7 @@ def list_emails_for_calendar_scan(
             FROM emails e
             LEFT JOIN calendar_extraction_log l ON l.email_id = e.id
             WHERE COALESCE(e.received_at, e.created_at) >= ?
-              AND (l.email_id IS NULL OR l.event_count = 0)
+              AND l.email_id IS NULL
             ORDER BY COALESCE(e.received_at, e.created_at) ASC
             """,
             (since_ts,),
@@ -258,6 +309,13 @@ def get_calendar_event(conn: sqlite3.Connection, event_id: str) -> dict[str, Any
         "SELECT * FROM calendar_events WHERE id = ?", (event_id,)
     ).fetchone()
     return _row_to_public(row) if row else None
+
+
+def delete_calendar_event(conn: sqlite3.Connection, event_id: str) -> bool:
+    """Delete a calendar event without changing vote counts elsewhere."""
+    cur = conn.execute("DELETE FROM calendar_events WHERE id = ?", (event_id,))
+    conn.commit()
+    return int(cur.rowcount) > 0
 
 
 def record_event_vote(

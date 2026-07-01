@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SmartInbox — Pipelines</title>
+  <link rel="icon" href="/static/img/smartinbox-icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/css/styles.css?v=25">
+</head>
+<body>
+  <div class="set-app process-app">
+    <div class="set-layout">
+      <div class="set-main">
+        <header class="header">
+          <h1 class="brand-title">
+            <img src="/static/img/smartinbox-icon.svg" alt="" class="brand-icon" width="32" height="32">
+            SmartInbox
+          </h1>
+          <p class="subtitle">Pipelines — mail fetch and processing queues</p>
+          <nav class="site-nav" aria-label="Site">
+            <a href="/">Inbox</a>
+            <a href="/search">Search</a>
+            <a href="/settings">Settings</a>
+            <a href="/llm">LLM</a>
+            <a href="/phrases">Phrases</a>
+            <a href="/senders">Senders</a>
+            <a href="/calendar">Calendar</a>
+            <a href="/pipelines" aria-current="page">Pipelines</a>
+            <a href="/storage">Storage</a>
+          </nav>
+        </header>
+
+        <section class="set-panel">
+          <h2>Re-fetch mail</h2>
+          <p class="set-hint">
+            Connects to all linked inboxes at the source (Gmail and Proton via IMAP), pulls messages
+            for the lookback window, and stores new ones in your local database — same as when mail
+            arrives during normal polling (summaries and calendar extraction run for new messages).
+            Use <strong>Delete &amp; re-import</strong> to remove local copies in that window first,
+            then fetch again so summaries and spam checks run from scratch.
+          </p>
+          <p class="calendar-inboxes" id="process-inboxes"></p>
+          <div class="process-fetch-controls">
+            <div class="process-lookback-field">
+              <span class="process-lookback-label">Re-fetch last</span>
+              <input
+                type="number"
+                class="set-input process-lookback-input"
+                id="process-lookback"
+                name="process-lookback"
+                value="5"
+                min="1"
+                max="365"
+                step="1"
+                inputmode="numeric"
+                aria-label="Lookback amount to re-fetch from mail sources"
+              >
+              <select class="set-input process-lookback-unit" id="process-lookback-unit" aria-label="Lookback unit">
+                <option value="days" selected>days</option>
+                <option value="hours">hours</option>
+              </select>
+            </div>
+            <div class="process-fetch-actions">
+              <button type="button" class="btn btn-primary" id="btn-fetch-mail">Fetch mail</button>
+              <button type="button" class="btn btn-danger" id="btn-reimport-mail">Delete &amp; re-import</button>
+              <button type="button" class="btn btn-secondary" id="btn-refresh-process">Refresh</button>
+            </div>
+          </div>
+          <p class="calendar-status" id="process-status"></p>
+        </section>
+
+        <section class="set-panel process-pipeline-panel">
+          <h2>Pipeline status</h2>
+          <p class="set-hint">
+            Live view of mail processing queues, calendar extraction backlog, summary backfill,
+            and recent Ollama response times. Rule-based calendar extraction runs while summaries
+            are pending; calendar LLM waits until the summary backlog clears.
+          </p>
+          <div class="process-kickstart-row">
+            <button type="button" class="btn btn-primary" id="btn-kickstart-pipelines">
+              Kickstart pipelines
+            </button>
+            <button type="button" class="btn btn-secondary" id="btn-investigate-tts">
+              Investigate TTS
+            </button>
+            <button type="button" class="btn btn-secondary" id="btn-restart-chatterbox">
+              Restart Chatterbox
+            </button>
+            <p class="set-hint process-kickstart-hint">
+              <strong>Kickstart</strong> resumes stalled summary and calendar workers, checks for
+              missed mail, and does <em>not</em> clear queues or reset existing summaries.
+              <strong>Investigate TTS</strong> checks Chatterbox connectivity, alert settings,
+              voice config, and runs a short test synthesis.
+              <strong>Restart Chatterbox</strong> restarts the TTS Docker container and re-runs
+              investigate — use when synthesis fails with CUDA or HTTP 500 errors.
+            </p>
+          </div>
+          <p class="calendar-status" id="process-kickstart-status"></p>
+          <p class="calendar-status" id="process-tts-investigate-status"></p>
+          <dl class="storage-dl process-tts-investigate-results" id="process-tts-investigate-results" hidden></dl>
+          <div class="process-pipeline-stats" id="process-pipeline-stats">
+            <p class="storage-empty">Loading…</p>
+          </div>
+          <div class="process-pipeline-sparklines">
+            <div
+              class="calendar-queue-sparkline process-pipeline-sparkline"
+              id="process-calendar-queue"
+              aria-label="Calendar extraction queue trend"
+            >
+              <div class="calendar-queue-sparkline-head">
+                <span class="calendar-queue-sparkline-label">Calendar queue</span>
+                <span class="calendar-queue-sparkline-value" id="process-calendar-count">—</span>
+              </div>
+              <svg
+                class="calendar-queue-sparkline-chart"
+                viewBox="0 0 120 28"
+                preserveAspectRatio="none"
+                aria-hidden="true"
+              >
+                <path class="calendar-queue-spark-fill" id="process-calendar-spark-fill" d=""></path>
+                <path class="calendar-queue-spark-path" id="process-calendar-spark-path" d=""></path>
+              </svg>
+              <p class="calendar-queue-sparkline-note" id="process-calendar-note"></p>
+            </div>
+            <div
+              class="calendar-queue-sparkline process-pipeline-sparkline"
+              id="process-summary-queue"
+              aria-label="Summary backlog trend"
+            >
+              <div class="calendar-queue-sparkline-head">
+                <span class="calendar-queue-sparkline-label">Summary backlog</span>
+                <span class="calendar-queue-sparkline-value" id="process-summary-count">—</span>
+              </div>
+              <svg
+                class="calendar-queue-sparkline-chart"
+                viewBox="0 0 120 28"
+                preserveAspectRatio="none"
+                aria-hidden="true"
+              >
+                <path class="calendar-queue-spark-fill" id="process-summary-spark-fill" d=""></path>
+                <path class="calendar-queue-spark-path" id="process-summary-spark-path" d=""></path>
+              </svg>
+              <p class="calendar-queue-sparkline-note" id="process-summary-note"></p>
+            </div>
+          </div>
+          <div class="process-llm-grid" id="process-llm-timings">
+            <p class="storage-empty">Loading LLM timings…</p>
+          </div>
+          <dl class="storage-dl process-pipeline-details" id="process-pipeline-details"></dl>
+          <div class="process-calendar-reprocess">
+            <h3>Summary backlog</h3>
+            <p class="set-hint">
+              <strong>Clear queue</strong> stops summary backfill and empties the backlog for stored
+              mail in the lookback window. <strong>Re-process</strong> resets summaries in that
+              window and runs summarization again. Calendar extraction waits until summaries finish.
+            </p>
+            <div class="process-fetch-controls">
+              <div class="process-lookback-field">
+                <span class="process-lookback-label">Last</span>
+                <input
+                  type="number"
+                  class="set-input process-lookback-input"
+                  id="process-summary-lookback"
+                  name="process-summary-lookback"
+                  value="5"
+                  min="1"
+                  max="365"
+                  step="1"
+                  inputmode="numeric"
+                  aria-label="Summary lookback amount"
+                >
+                <select class="set-input process-lookback-unit" id="process-summary-lookback-unit" aria-label="Summary lookback unit">
+                  <option value="days" selected>days</option>
+                  <option value="hours">hours</option>
+                </select>
+              </div>
+              <div class="process-fetch-actions">
+                <button type="button" class="btn btn-primary" id="btn-summary-clear-queue">Clear queue</button>
+                <button type="button" class="btn btn-primary" id="btn-summary-reprocess">Re-process</button>
+              </div>
+            </div>
+            <p class="calendar-status" id="process-summary-status"></p>
+          </div>
+          <div class="process-calendar-reprocess">
+            <h3>Calendar queue</h3>
+            <p class="set-hint">
+              <strong>Clear queue</strong> stops calendar backfill and empties the extraction queue
+              for stored mail in the lookback window. <strong>Re-process</strong> resets extraction
+              in that window and runs date extraction again. Does not fetch new mail from your inboxes.
+            </p>
+            <div class="process-fetch-controls">
+              <div class="process-lookback-field">
+                <span class="process-lookback-label">Last</span>
+                <input
+                  type="number"
+                  class="set-input process-lookback-input"
+                  id="process-calendar-lookback"
+                  name="process-calendar-lookback"
+                  value="5"
+                  min="1"
+                  max="365"
+                  step="1"
+                  inputmode="numeric"
+                  aria-label="Calendar lookback amount"
+                >
+                <select class="set-input process-lookback-unit" id="process-calendar-lookback-unit" aria-label="Calendar lookback unit">
+                  <option value="days" selected>days</option>
+                  <option value="hours">hours</option>
+                </select>
+              </div>
+              <div class="process-fetch-actions">
+                <button type="button" class="btn btn-primary" id="btn-calendar-clear-queue">Clear queue</button>
+                <button type="button" class="btn btn-primary" id="btn-calendar-reprocess">Re-process</button>
+              </div>
+            </div>
+            <p class="calendar-status" id="process-calendar-status"></p>
+          </div>
+        </section>
+      </div>
+
+      <div class="set-activity-shell set-activity-shell--full" id="set-activity-shell" data-activity-scope="pipelines">
+        <div
+          class="set-activity-resizer set-activity-resizer--width"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize activity log width"
+          tabindex="0"
+          title="Drag to resize width · double-click to reset"
+        ></div>
+        <aside class="set-activity-panel panel activity-log-panel">
+          <div class="panel-head">
+            <h2>Activity Log</h2>
+            <button type="button" class="btn btn-secondary btn-small" id="btn-clear-process-activity-log">Clear</button>
+          </div>
+          <div class="log-scroll" id="process-activity-log"></div>
+          <div
+            class="set-activity-resizer set-activity-resizer--height"
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Resize activity log height"
+            tabindex="0"
+            title="Drag to resize height · double-click to reset"
+          ></div>
+          <div
+            class="set-activity-resizer set-activity-resizer--corner"
+            role="separator"
+            aria-label="Resize activity log width and height"
+            tabindex="0"
+            title="Drag corner to resize width and height · double-click to reset"
+          ></div>
+        </aside>
+      </div>
+    </div>
+  </div>
+  <script src="/static/js/alerts.js?v=1"></script>
+  <script src="/static/js/activity-log-resize.js?v=4"></script>
+  <script src="/static/js/process.js?v=17"></script>
+</body>
+</html>
