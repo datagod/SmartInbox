@@ -18,9 +18,18 @@ systemctl --user enable smartinbox.service
 systemctl --user restart smartinbox.service
 systemctl --user --no-pager status smartinbox.service
 
+if command -v loginctl >/dev/null 2>&1; then
+  if ! loginctl show-user "$USER" -p Linger --value 2>/dev/null | grep -qx yes; then
+    echo ""
+    echo "Enabling systemd user linger so SmartInbox keeps running after logout…"
+    sudo loginctl enable-linger "$USER"
+  fi
+fi
+
 echo ""
 echo "SmartInbox user service installed."
 echo "  status:  systemctl --user status smartinbox"
 echo "  logs:    journalctl --user -u smartinbox -f"
+echo "  restart: systemctl --user restart smartinbox"
 echo "  stop:    systemctl --user stop smartinbox"
 echo "  disable: systemctl --user disable smartinbox"

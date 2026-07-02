@@ -8,8 +8,13 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/home/bill/SmartInbox
 ExecStart=/home/bill/SmartInbox/.venv/bin/smartinbox
+Environment=PYTHONUNBUFFERED=1
 Restart=on-failure
 RestartSec=5
+# SSE browser tabs can delay graceful shutdown; cap stop time so restarts stay snappy.
+TimeoutStopSec=20
+KillMode=mixed
+KillSignal=SIGTERM
 # host/port come from config.yaml (default 127.0.0.1:8090)
 
 [Install]
