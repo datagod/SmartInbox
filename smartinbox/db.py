@@ -75,10 +75,34 @@ def _ensure_email_account_columns(conn: sqlite3.Connection) -> None:
         ("starred", "ALTER TABLE emails ADD COLUMN starred INTEGER NOT NULL DEFAULT 0"),
         ("calendar_ics", "ALTER TABLE emails ADD COLUMN calendar_ics TEXT"),
         ("is_spam", "ALTER TABLE emails ADD COLUMN is_spam INTEGER"),
+        ("sender_key", "ALTER TABLE emails ADD COLUMN sender_key TEXT"),
     ):
         if name not in cols:
             conn.execute(ddl)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_emails_sender_key ON emails(sender_key)"
+    )
+    _backfill_email_sender_keys(conn)
     conn.commit()
+
+
+def _backfill_email_sender_keys(conn: sqlite3.Connection) -> None:
+    from smartinbox.important_senders import normalize_sender
+
+    rows = conn.execute(
+        """
+        SELECT id, sender FROM emails
+        WHERE sender_key IS NULL OR TRIM(sender_key) = ''
+        """
+    ).fetchall()
+    for row in rows:
+        key = normalize_sender(str(row["sender"] or ""))
+        if not key:
+            continue
+        conn.execute(
+            "UPDATE emails SET sender_key = ? WHERE id = ?",
+            (key, row["id"]),
+        )
 
 
 def get_setting(conn: sqlite3.Connection, key: str, default: Any = None) -> Any:
@@ -107,7 +131,10 @@ def _normalize_calendar_ics(value: Any) -> str | None:
 
 def upsert_email(conn: sqlite3.Connection, email: dict[str, Any]) -> str:
     """Insert or touch an email. Returns 'new', 'ics_updated', or 'existing'."""
+    from smartinbox.important_senders import normalize_sender
+
     ics = _normalize_calendar_ics(email.get("calendar_ics"))
+    sender_key = normalize_sender(email.get("sender")) or None
     existing = conn.execute(
         "SELECT calendar_ics FROM emails WHERE id = ?",
         (email["id"],),
@@ -127,9 +154,9 @@ def upsert_email(conn: sqlite3.Connection, email: dict[str, Any]) -> str:
         """
         INSERT INTO emails (
             id, thread_id, account_id, account_email, provider,
-            sender, subject, snippet, body_text, calendar_ics,
+            sender, sender_key, subject, snippet, body_text, calendar_ics,
             received_at, summary_short, summary_detailed, alerted_at, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             email["id"],
@@ -138,6 +165,7 @@ def upsert_email(conn: sqlite3.Connection, email: dict[str, Any]) -> str:
             email.get("account_email"),
             email.get("provider"),
             email.get("sender"),
+            sender_key,
             email.get("subject"),
             email.get("snippet"),
             email.get("body_text"),

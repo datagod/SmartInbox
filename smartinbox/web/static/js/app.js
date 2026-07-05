@@ -55,6 +55,7 @@
   let summaryViewMode = 'summary';
   let importantKeys = new Set();
   let senderInterest = {};
+  let busyCalendarEmailId = null;
 
 
   function clampVolume(value) {
@@ -409,6 +410,60 @@
     });
   }
 
+  function calendarButtonLabel(email) {
+    if (email.calendar_event_count > 0) {
+      return `Re-scan (${email.calendar_event_count})`;
+    }
+    if (email.calendar_extracted) {
+      return 'Re-scan';
+    }
+    return 'Add to calendar';
+  }
+
+  async function addToCalendar(emailId) {
+    if (!emailId || busyCalendarEmailId) return;
+    const row = emails.find((e) => e.id === emailId);
+    const subject = row?.subject || '(no subject)';
+    busyCalendarEmailId = emailId;
+    renderInbox();
+    appendLog({
+      ts: new Date().toLocaleTimeString(),
+      level: 'info',
+      message: `Calendar — extracting dates from “${subject}”…`,
+    });
+    try {
+      const res = await fetch(`/api/emails/${encodeURIComponent(emailId)}/calendar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: true }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'Calendar extraction failed');
+      const count = data.events_found || 0;
+      if (row) {
+        row.calendar_extracted = true;
+        row.calendar_event_count = count;
+      }
+      appendLog({
+        ts: new Date().toLocaleTimeString(),
+        level: count > 0 ? 'info' : 'warning',
+        message:
+          count > 0
+            ? `Calendar — added ${count} event${count === 1 ? '' : 's'} from “${subject}”.`
+            : `Calendar — no dates found in “${subject}”.`,
+      });
+    } catch (e) {
+      appendLog({
+        ts: new Date().toLocaleTimeString(),
+        level: 'warning',
+        message: `Calendar — failed for “${subject}”: ${e}`,
+      });
+    } finally {
+      busyCalendarEmailId = null;
+      renderInbox();
+    }
+  }
+
   function navigateInbox(delta) {
     const sorted = sortedInboxEmails();
     if (!sorted.length) return;
@@ -461,16 +516,22 @@
         const lastVote = senderLastVote(e.sender);
         const upActive = lastVote === 'up' ? ' vote-active' : '';
         const downActive = lastVote === 'down' ? ' vote-active' : '';
+        const calBusy = busyCalendarEmailId === e.id;
+        const calBadge =
+          e.calendar_event_count > 0
+            ? `<span class="inbox-cal-badge" title="${e.calendar_event_count} calendar event${e.calendar_event_count === 1 ? '' : 's'}">${e.calendar_event_count} on calendar</span> `
+            : '';
         return `<div class="email-item${sel}${imp}${starred ? ' starred' : ''}${junk}${spam}" data-id="${escapeHtml(e.id)}" tabindex="-1">
           <div class="email-votes" role="group" aria-label="Rate sender">
             <button type="button" class="vote-btn vote-up${upActive}" data-vote="up" title="Interested in this sender" aria-label="Upvote sender">▲</button>
             <button type="button" class="vote-btn vote-down${downActive}" data-vote="down" title="Mark sender as junk" aria-label="Downvote sender">▼</button>
           </div>
           <div class="email-item-body">
-            <div class="email-subject">${badge}${prov}${escapeHtml(e.subject || '(no subject)')}</div>
+            <div class="email-subject">${badge}${calBadge}${prov}${escapeHtml(e.subject || '(no subject)')}</div>
             <div class="email-meta">${escapeHtml(e.sender || '')} · ${fmtTime(e.received_at)}</div>
           </div>
           <div class="email-item-actions">
+            <button type="button" class="btn btn-primary btn-small btn-add-calendar" title="Extract dates and add to calendar" ${calBusy || demoMode ? 'disabled' : ''}>${escapeHtml(calendarButtonLabel(e))}</button>
             <button type="button" class="btn btn-secondary btn-small btn-hide-email" title="Hide from inbox">Hide</button>
           </div>
         </div>`;
@@ -478,12 +539,12 @@
       .join('');
     inboxList.querySelectorAll('.email-item').forEach((el) => {
       el.addEventListener('click', (ev) => {
-        if (ev.target.closest('.vote-btn, .btn-hide-email')) return;
+        if (ev.target.closest('.vote-btn, .btn-hide-email, .btn-add-calendar')) return;
         setInboxKeyboardNav(false);
         selectEmail(el.dataset.id);
       });
       el.addEventListener('dblclick', (ev) => {
-        if (ev.target.closest('.vote-btn, .btn-hide-email')) return;
+        if (ev.target.closest('.vote-btn, .btn-hide-email, .btn-add-calendar')) return;
         ev.preventDefault();
         ev.stopPropagation();
         starEmail(el.dataset.id);
@@ -494,6 +555,11 @@
           ev.stopPropagation();
           voteSender(el.dataset.id, btn.dataset.vote);
         });
+      });
+      el.querySelector('.btn-add-calendar')?.addEventListener('click', (ev) => {
+        ev.preventDefault();
+        ev.stopPropagation();
+        addToCalendar(el.dataset.id);
       });
       el.querySelector('.btn-hide-email')?.addEventListener('click', (ev) => {
         ev.preventDefault();

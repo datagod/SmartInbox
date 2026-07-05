@@ -42,8 +42,14 @@
   const processCalendarStatus = document.getElementById('process-calendar-status');
   const btnKickstartPipelines = document.getElementById('btn-kickstart-pipelines');
   const processKickstartStatus = document.getElementById('process-kickstart-status');
-  const btnInvestigateTts = document.getElementById('btn-investigate-tts');
+  const btnInvestigatePipelines = document.getElementById('btn-investigate-pipelines');
   const btnRestartChatterbox = document.getElementById('btn-restart-chatterbox');
+  const processPipelineInvestigateStatus = document.getElementById(
+    'process-pipeline-investigate-status'
+  );
+  const processPipelineInvestigateResults = document.getElementById(
+    'process-pipeline-investigate-results'
+  );
   const processTtsInvestigateStatus = document.getElementById('process-tts-investigate-status');
   const processTtsInvestigateResults = document.getElementById('process-tts-investigate-results');
 
@@ -752,19 +758,20 @@
     }
   }
 
-  function renderTtsInvestigateStatus(demoMode) {
-    if (demoMode && processTtsInvestigateStatus && !processTtsInvestigateStatus.textContent) {
-      processTtsInvestigateStatus.textContent =
-        'Demo mode — live alerts disabled; investigate still checks config and Chatterbox';
+  function renderInvestigateStatus(demoMode) {
+    if (demoMode && processPipelineInvestigateStatus && !processPipelineInvestigateStatus.textContent) {
+      processPipelineInvestigateStatus.textContent =
+        'Demo mode — live pipelines disabled; investigate still reports queue state';
     }
   }
 
-  function renderTtsInvestigateResults(data) {
-    if (!processTtsInvestigateResults) return;
+  function renderInvestigateResults(data, options = {}) {
+    const resultsEl = options.resultsEl || processPipelineInvestigateResults;
+    if (!resultsEl) return;
     const checks = Array.isArray(data?.checks) ? data.checks : [];
     if (!checks.length) {
-      processTtsInvestigateResults.hidden = true;
-      processTtsInvestigateResults.innerHTML = '';
+      resultsEl.hidden = true;
+      resultsEl.innerHTML = '';
       return;
     }
     const rows = checks.map((check) => {
@@ -780,7 +787,13 @@
       const label = escapeHtml(String(check.label || check.id || 'Check'));
       return `<div class="storage-dl-row ${statusClass}"><dt>${label}</dt><dd><span class="process-tts-check-status">${status}</span> ${detail}</dd></div>`;
     });
-    const recent = Array.isArray(data.recent_tts_logs) ? data.recent_tts_logs : [];
+    const recent =
+      Array.isArray(data.recent_pipeline_logs) && data.recent_pipeline_logs.length
+        ? data.recent_pipeline_logs
+        : Array.isArray(data.recent_tts_logs)
+          ? data.recent_tts_logs
+          : [];
+    const logLabel = options.logLabel || (data.recent_pipeline_logs ? 'Recent pipeline log' : 'Recent TTS log');
     const tips = Array.isArray(data.recommendations) ? data.recommendations : [];
     if (tips.length) {
       const tipLines = tips
@@ -803,11 +816,11 @@
         })
         .join('');
       rows.push(
-        `<div class="storage-dl-row"><dt>Recent TTS log</dt><dd class="process-tts-log-block">${logLines}</dd></div>`
+        `<div class="storage-dl-row"><dt>${escapeHtml(logLabel)}</dt><dd class="process-tts-log-block">${logLines}</dd></div>`
       );
     }
-    processTtsInvestigateResults.innerHTML = rows.join('');
-    processTtsInvestigateResults.hidden = false;
+    resultsEl.innerHTML = rows.join('');
+    resultsEl.hidden = false;
   }
 
   async function kickstartPipelines() {
@@ -848,44 +861,53 @@
     }
   }
 
+  function setPipelineActionBusy(busy) {
+    if (btnInvestigatePipelines) btnInvestigatePipelines.disabled = busy;
+  }
+
   function setTtsActionBusy(busy) {
-    if (btnInvestigateTts) btnInvestigateTts.disabled = busy;
     if (btnRestartChatterbox) btnRestartChatterbox.disabled = busy;
   }
 
-  async function investigateTts() {
-    setTtsActionBusy(true);
-    if (processTtsInvestigateStatus) {
-      processTtsInvestigateStatus.textContent = 'Investigating TTS…';
+  async function investigatePipelines() {
+    setPipelineActionBusy(true);
+    if (processPipelineInvestigateStatus) {
+      processPipelineInvestigateStatus.textContent = 'Investigating pipelines…';
+      processPipelineInvestigateStatus.classList.remove('calendar-status--warn');
     }
-    if (processTtsInvestigateResults) {
-      processTtsInvestigateResults.hidden = true;
-      processTtsInvestigateResults.innerHTML = '';
+    if (processPipelineInvestigateResults) {
+      processPipelineInvestigateResults.hidden = true;
+      processPipelineInvestigateResults.innerHTML = '';
     }
-    appendActivityLog(localLogEntry('TTS investigate started'));
+    appendActivityLog(localLogEntry('Pipeline investigate started'));
     try {
-      const res = await fetch('/api/pipelines/tts-investigate', {
+      const calendarDays = listDaysForCalendarLookback(calendarReprocessLookback());
+      const res = await fetch('/api/pipelines/investigate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ test_synthesis: true }),
+        body: JSON.stringify({ list_days: calendarDays }),
       });
       const data = await res.json();
-      if (!res.ok || !data.ok) throw new Error(data.error || 'TTS investigate failed');
+      if (!res.ok || !data.ok) throw new Error(data.error || 'Pipeline investigate failed');
       if (Array.isArray(data.logs)) renderActivityLog(data.logs);
-      const prefix = data.healthy ? 'TTS OK' : 'TTS issues';
-      if (processTtsInvestigateStatus) {
-        processTtsInvestigateStatus.textContent = `${prefix}: ${data.message || 'done'}`;
-        processTtsInvestigateStatus.classList.toggle('calendar-status--warn', !data.healthy);
+      if (data.pipeline) renderPipeline(data.pipeline, data.fetch);
+      const prefix = data.healthy ? 'Pipelines OK' : 'Pipeline issues';
+      if (processPipelineInvestigateStatus) {
+        processPipelineInvestigateStatus.textContent = `${prefix}: ${data.message || 'done'}`;
+        processPipelineInvestigateStatus.classList.toggle('calendar-status--warn', !data.healthy);
       }
-      renderTtsInvestigateResults(data);
+      renderInvestigateResults(data, {
+        logLabel: 'Recent pipeline log',
+        resultsEl: processPipelineInvestigateResults,
+      });
     } catch (e) {
-      appendActivityLog(localLogEntry(`TTS investigate error: ${e}`, 'warning'));
-      if (processTtsInvestigateStatus) {
-        processTtsInvestigateStatus.textContent = `TTS investigate error: ${e}`;
-        processTtsInvestigateStatus.classList.add('calendar-status--warn');
+      appendActivityLog(localLogEntry(`Pipeline investigate error: ${e}`, 'warning'));
+      if (processPipelineInvestigateStatus) {
+        processPipelineInvestigateStatus.textContent = `Pipeline investigate error: ${e}`;
+        processPipelineInvestigateStatus.classList.add('calendar-status--warn');
       }
     } finally {
-      setTtsActionBusy(false);
+      setPipelineActionBusy(false);
     }
   }
 
@@ -916,7 +938,10 @@
         processTtsInvestigateStatus.textContent = `${prefix}: ${data.message || 'Restart complete'}`;
         processTtsInvestigateStatus.classList.toggle('calendar-status--warn', !healthy);
       }
-      renderTtsInvestigateResults(inv);
+      renderInvestigateResults(inv, {
+        logLabel: 'Recent TTS log',
+        resultsEl: processTtsInvestigateResults,
+      });
     } catch (e) {
       appendActivityLog(localLogEntry(`Chatterbox restart error: ${e}`, 'warning'));
       if (processTtsInvestigateStatus) {
@@ -1225,7 +1250,7 @@
       renderSummaryReprocessStatus(data.pipeline, data.demo_mode);
       renderCalendarReprocessStatus(data.pipeline, data.demo_mode);
       renderKickstartStatus(data.demo_mode);
-      renderTtsInvestigateStatus(data.demo_mode);
+      renderInvestigateStatus(data.demo_mode);
       if (Array.isArray(data.logs)) renderActivityLog(data.logs);
       if (
         data.fetch?.running ||
@@ -1411,7 +1436,7 @@
   btnCalendarClearQueue?.addEventListener('click', () => clearCalendarQueue());
   btnCalendarReprocess?.addEventListener('click', () => reprocessCalendar());
   btnKickstartPipelines?.addEventListener('click', () => kickstartPipelines());
-  btnInvestigateTts?.addEventListener('click', () => investigateTts());
+  btnInvestigatePipelines?.addEventListener('click', () => investigatePipelines());
   btnRestartChatterbox?.addEventListener('click', () => restartChatterbox());
 
   btnClearActivityLog?.addEventListener('click', async () => {

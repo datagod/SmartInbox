@@ -7,6 +7,8 @@ import sqlite3
 import time
 from typing import Any
 
+from smartinbox.important_senders import display_sender, normalize_sender
+
 
 def init_calendar_tables(conn: sqlite3.Connection) -> None:
     conn.execute(
@@ -43,7 +45,159 @@ def init_calendar_tables(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_calendar_events_start ON calendar_events(event_start)"
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS calendar_ignored_senders (
+            sender_key TEXT PRIMARY KEY,
+            display TEXT NOT NULL,
+            created_at REAL NOT NULL
+        )
+        """
+    )
+    _ensure_calendar_sender_key_column(conn)
     conn.commit()
+
+
+def _ensure_calendar_sender_key_column(conn: sqlite3.Connection) -> None:
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(calendar_events)").fetchall()}
+    if "sender_key" not in cols:
+        conn.execute("ALTER TABLE calendar_events ADD COLUMN sender_key TEXT")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_calendar_events_sender_key "
+        "ON calendar_events(sender_key)"
+    )
+    rows = conn.execute(
+        """
+        SELECT id, sender FROM calendar_events
+        WHERE sender_key IS NULL OR TRIM(sender_key) = ''
+        """
+    ).fetchall()
+    for row in rows:
+        key = normalize_sender(str(row["sender"] or ""))
+        if not key:
+            continue
+        conn.execute(
+            "UPDATE calendar_events SET sender_key = ? WHERE id = ?",
+            (key, row["id"]),
+        )
+
+
+def add_calendar_ignored_sender(
+    conn: sqlite3.Connection, sender: str | None
+) -> dict[str, Any]:
+    key = normalize_sender(sender)
+    if not key:
+        raise ValueError("Could not parse sender address.")
+    now = time.time()
+    display = display_sender(sender)
+    conn.execute(
+        """
+        INSERT INTO calendar_ignored_senders (sender_key, display, created_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(sender_key) DO UPDATE SET
+            display = excluded.display
+        """,
+        (key, display, now),
+    )
+    conn.commit()
+    return {"sender_key": key, "display": display, "created_at": now}
+
+
+def remove_calendar_ignored_sender(
+    conn: sqlite3.Connection, sender: str | None
+) -> bool:
+    key = normalize_sender(sender)
+    if not key:
+        return False
+    cur = conn.execute(
+        "DELETE FROM calendar_ignored_senders WHERE sender_key = ?",
+        (key,),
+    )
+    conn.commit()
+    return int(cur.rowcount) > 0
+
+
+def is_calendar_sender_ignored(conn: sqlite3.Connection, sender: str | None) -> bool:
+    key = normalize_sender(sender)
+    if not key:
+        return False
+    row = conn.execute(
+        "SELECT 1 FROM calendar_ignored_senders WHERE sender_key = ?",
+        (key,),
+    ).fetchone()
+    return row is not None
+
+
+def list_calendar_ignored_senders(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT sender_key, display, created_at
+        FROM calendar_ignored_senders
+        ORDER BY display COLLATE NOCASE ASC
+        """
+    ).fetchall()
+    return [
+        {
+            "sender_key": str(r["sender_key"]),
+            "display": str(r["display"]),
+            "created_at": float(r["created_at"]),
+        }
+        for r in rows
+    ]
+
+
+def email_ids_for_sender_key(conn: sqlite3.Connection, sender_key: str) -> list[str]:
+    key = str(sender_key or "").strip().lower()
+    if not key:
+        return []
+    rows = conn.execute(
+        "SELECT id FROM emails WHERE sender_key = ?",
+        (key,),
+    ).fetchall()
+    return [str(r["id"]) for r in rows]
+
+
+def hide_calendar_events_for_sender(conn: sqlite3.Connection, sender: str | None) -> int:
+    key = normalize_sender(sender)
+    if not key:
+        return 0
+    now = time.time()
+    cur = conn.execute(
+        """
+        UPDATE calendar_events
+        SET hidden = 1, last_vote = 'down', updated_at = ?
+        WHERE sender_key = ?
+        """,
+        (now, key),
+    )
+    conn.commit()
+    return int(cur.rowcount)
+
+
+def unhide_calendar_events_for_sender(conn: sqlite3.Connection, sender: str | None) -> int:
+    key = normalize_sender(sender)
+    if not key:
+        return 0
+    now = time.time()
+    cur = conn.execute(
+        """
+        UPDATE calendar_events
+        SET hidden = 0, updated_at = ?
+        WHERE sender_key = ? AND hidden = 1
+        """,
+        (now, key),
+    )
+    conn.commit()
+    return int(cur.rowcount)
+
+
+def skip_calendar_extraction_for_sender(conn: sqlite3.Connection, sender: str | None) -> int:
+    """Mark all mail from this sender as calendar-processed (no future extraction)."""
+    ids = email_ids_for_sender_key(conn, normalize_sender(sender))
+    if not ids:
+        return 0
+    skip_calendar_backlog_for_emails(conn, ids)
+    return len(ids)
 
 
 def make_event_id(email_id: str, title: str, event_start: float) -> str:
@@ -84,6 +238,24 @@ def calendar_extraction_event_count(conn: sqlite3.Connection, email_id: str) -> 
     if row is None:
         return None
     return int(row["event_count"])
+
+
+def calendar_extraction_event_counts(
+    conn: sqlite3.Connection, email_ids: list[str]
+) -> dict[str, int]:
+    ids = [str(email_id).strip() for email_id in email_ids if str(email_id).strip()]
+    if not ids:
+        return {}
+    placeholders = ",".join("?" for _ in ids)
+    rows = conn.execute(
+        f"""
+        SELECT email_id, event_count
+        FROM calendar_extraction_log
+        WHERE email_id IN ({placeholders})
+        """,
+        ids,
+    ).fetchall()
+    return {str(row["email_id"]): int(row["event_count"]) for row in rows}
 
 
 def is_email_extracted(conn: sqlite3.Connection, email_id: str) -> bool:
@@ -247,9 +419,9 @@ def upsert_calendar_event(conn: sqlite3.Connection, event: dict[str, Any]) -> di
         """
         INSERT INTO calendar_events (
             id, email_id, title, description, location,
-            event_start, event_end, source_text, sender, subject,
+            event_start, event_end, source_text, sender, sender_key, subject,
             upvotes, downvotes, last_vote, hidden, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, NULL, 0, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, NULL, 0, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             title = excluded.title,
             description = excluded.description,
@@ -258,6 +430,7 @@ def upsert_calendar_event(conn: sqlite3.Connection, event: dict[str, Any]) -> di
             event_end = excluded.event_end,
             source_text = excluded.source_text,
             sender = excluded.sender,
+            sender_key = excluded.sender_key,
             subject = excluded.subject,
             updated_at = excluded.updated_at
         """,
@@ -271,6 +444,7 @@ def upsert_calendar_event(conn: sqlite3.Connection, event: dict[str, Any]) -> di
             event.get("event_end"),
             event.get("source_text"),
             event.get("sender"),
+            normalize_sender(event.get("sender")) or None,
             event.get("subject"),
             now,
             now,

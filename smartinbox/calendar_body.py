@@ -75,7 +75,21 @@ _MONTH_DAY_YEAR_TIME_RE = re.compile(
     r"(\w+)\s+"
     r"(\d{1,2}),?\s+"
     r"(\d{4})"
-    r"(?:,?\s+at\s+(\d{1,2}):(\d{2})\s*(am|pm))?"
+    r"(?:,?\s+at\s+(\d{1,2}):(\d{2})\s*(am|pm)|,?\s+at\s+(\d{1,2}):(\d{2})(am|pm))?"
+)
+_NEARBY_AT_TIME_RE = re.compile(
+    r"(?i)\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b"
+)
+_NEARBY_HM_AMPM_RE = re.compile(
+    r"(?i)\b(\d{1,2}):(\d{2})\s*(am|pm)\b"
+)
+_NEARBY_HMAMP_RE = re.compile(r"(?i)\b(\d{1,2}):(\d{2})(am|pm)\b")
+_NEARBY_HOUR_AMPM_RE = re.compile(r"(?i)(?<!\d)(\d{1,2})\s*(am|pm)\b")
+_NEARBY_TIME_RES = (
+    _NEARBY_AT_TIME_RE,
+    _NEARBY_HM_AMPM_RE,
+    _NEARBY_HMAMP_RE,
+    _NEARBY_HOUR_AMPM_RE,
 )
 _ISO_INLINE_RE = re.compile(
     r"(?i)\b(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?)?"
@@ -172,6 +186,71 @@ def _apply_ampm(hour: int, ampm: str | None) -> int:
     if ampm == "am" and hour == 12:
         return 0
     return hour
+
+
+def _groups_to_time(
+    hour_raw: str | None,
+    minute_raw: str | None,
+    ampm_raw: str | None,
+) -> tuple[int, int] | None:
+    if hour_raw is None or str(hour_raw).strip() == "":
+        return None
+    hour = int(hour_raw)
+    minute = int(minute_raw) if minute_raw else 0
+    hour = _apply_ampm(hour, _normalize_ampm(ampm_raw))
+    return hour, minute
+
+
+def _extract_nearby_time(
+    text: str, match: re.Match[str]
+) -> tuple[int, int, str | None] | None:
+    """Find an explicit time close to a date match (within 40 chars after the date)."""
+    fragment = text[match.start() : min(len(text), match.end() + 160)]
+    date_end = match.end() - match.start()
+    best: tuple[int, int, str | None] | None = None
+    best_distance: int | None = None
+    for pattern in _NEARBY_TIME_RES:
+        for time_match in pattern.finditer(fragment):
+            if time_match.start() < date_end:
+                continue
+            distance = time_match.start() - date_end
+            if distance > 40:
+                continue
+            groups = time_match.groups()
+            if pattern is _NEARBY_HOUR_AMPM_RE:
+                parsed = _groups_to_time(groups[0], None, groups[1])
+            else:
+                parsed = _groups_to_time(groups[0], groups[1], groups[2])
+            if parsed is None:
+                continue
+            hour, minute = parsed
+            ampm = _normalize_ampm(groups[-1])
+            if best_distance is None or distance < best_distance:
+                best = (hour, minute, ampm)
+                best_distance = distance
+    return best
+
+
+def _month_day_year_time_groups(
+    groups: tuple[str | None, ...],
+) -> tuple[int, int, str | None] | None:
+    if groups[3] is not None:
+        parsed = _groups_to_time(groups[3], groups[4], groups[5])
+        if parsed is None:
+            return None
+        hour, minute = parsed
+        return hour, minute, _normalize_ampm(groups[5])
+    if len(groups) > 6 and groups[6] is not None:
+        parsed = _groups_to_time(groups[6], groups[7], groups[8])
+        if parsed is None:
+            return None
+        hour, minute = parsed
+        return hour, minute, _normalize_ampm(groups[8])
+    return None
+
+
+def _iso_match_has_time(groups: tuple[str | None, ...]) -> bool:
+    return groups[3] is not None and str(groups[3]).strip() != ""
 
 
 def _to_timestamp(
@@ -272,7 +351,9 @@ def _iter_body_date_matches(body: str):
             yield source, match
 
 
-def _timestamp_from_match(match: re.Match[str], timezone: str) -> float | None:
+def _timestamp_from_match(
+    match: re.Match[str], timezone: str, *, text: str = ""
+) -> float | None:
     groups = match.groups()
     if match.re is _EXPLICIT_DATE_RE:
         y, m, d = (int(x) for x in groups[0].split("-"))
@@ -334,9 +415,12 @@ def _timestamp_from_match(match: re.Match[str], timezone: str) -> float | None:
             return None
         day = int(groups[1])
         year = int(groups[2])
-        hour = int(groups[3] or 9)
-        minute = int(groups[4] or 0)
-        ampm = groups[5]
+        time_parts = _month_day_year_time_groups(groups)
+        if time_parts is None and text:
+            time_parts = _extract_nearby_time(text, match)
+        if time_parts is None:
+            return None
+        hour, minute, _ampm = time_parts
         return _to_timestamp(
             year=year,
             month=month,
@@ -344,14 +428,16 @@ def _timestamp_from_match(match: re.Match[str], timezone: str) -> float | None:
             hour=hour,
             minute=minute,
             second=0,
-            ampm=ampm,
+            ampm=None,
             timezone=timezone,
         )
     if match.re is _ISO_INLINE_RE:
+        if not _iso_match_has_time(groups):
+            return None
         year = int(groups[0])
         month = int(groups[1])
         day = int(groups[2])
-        hour = int(groups[3] or 9)
+        hour = int(groups[3])
         minute = int(groups[4] or 0)
         second = int(groups[5] or 0)
         ampm = groups[6]
@@ -387,18 +473,21 @@ def parse_body_calendar_events(
     seen: set[str] = set()
 
     for source_text, match in _iter_body_date_matches(text):
-        start_ts = _timestamp_from_match(match, timezone)
+        start_ts = _timestamp_from_match(match, timezone, text=text)
         if start_ts is None:
             continue
         is_explicit = source_text.lower().lstrip().startswith("date:")
         is_natural = match.re is _NATURAL_DATE_RE
         is_when_line = "->" in source_text
+        iso_has_time = match.re is _ISO_INLINE_RE and _iso_match_has_time(match.groups())
+        iso_in_date_line = iso_has_time and "date:" in source_text.lower()
         is_strong = (
             is_explicit
             or is_natural
             or is_when_line
             or match.re is _MONTH_DAY_YEAR_TIME_RE
-            or match.re is _ISO_INLINE_RE
+            or iso_in_date_line
+            or (iso_has_time and has_hint)
         )
         if (
             not has_hint
@@ -523,11 +612,8 @@ def _next_weekday(
 
 def _time_from_groups(
     hour_raw: str | None, minute_raw: str | None, ampm: str | None
-) -> tuple[int, int]:
-    hour = int(hour_raw) if hour_raw else 9
-    minute = int(minute_raw) if minute_raw else 0
-    hour = _apply_ampm(hour, _normalize_ampm(ampm))
-    return hour, minute
+) -> tuple[int, int] | None:
+    return _groups_to_time(hour_raw, minute_raw, ampm)
 
 
 def _append_event(
@@ -585,7 +671,10 @@ def parse_relative_calendar_events(
         day = (ref + timedelta(days=1)).replace(
             hour=0, minute=0, second=0, microsecond=0
         )
-        hour, minute = _time_from_groups(match.group(1), match.group(2), match.group(3))
+        time_parts = _time_from_groups(match.group(1), match.group(2), match.group(3))
+        if time_parts is None:
+            continue
+        hour, minute = time_parts
         start_ts = _to_timestamp(
             year=day.year,
             month=day.month,
@@ -611,7 +700,10 @@ def parse_relative_calendar_events(
 
     for match in _TODAY_AT_RE.finditer(text):
         day = ref.replace(hour=0, minute=0, second=0, microsecond=0)
-        hour, minute = _time_from_groups(match.group(1), match.group(2), match.group(3))
+        time_parts = _time_from_groups(match.group(1), match.group(2), match.group(3))
+        if time_parts is None:
+            continue
+        hour, minute = time_parts
         start_ts = _to_timestamp(
             year=day.year,
             month=day.month,
@@ -642,7 +734,10 @@ def parse_relative_calendar_events(
         if weekday is None:
             continue
         day = _next_weekday(ref, weekday, which=which)
-        hour, minute = _time_from_groups(match.group(3), match.group(4), match.group(5))
+        time_parts = _time_from_groups(match.group(3), match.group(4), match.group(5))
+        if time_parts is None:
+            continue
+        hour, minute = time_parts
         start_ts = _to_timestamp(
             year=day.year,
             month=day.month,
@@ -687,7 +782,10 @@ def parse_subject_calendar_events(
         return []
     day = int(match.group(2))
     year = int(match.group(3))
-    hour, minute = _time_from_groups(match.group(4), match.group(5), match.group(6))
+    time_parts = _time_from_groups(match.group(4), match.group(5), match.group(6))
+    if time_parts is None:
+        return []
+    hour, minute = time_parts
     start_ts = _to_timestamp(
         year=year,
         month=month,

@@ -1,8 +1,12 @@
 (function () {
+  const PAGE_SIZE = 50;
+
   const phrasesStatus = document.getElementById('phrases-status');
   const phrasesTbody = document.getElementById('phrases-tbody');
+  const phrasesPagination = document.getElementById('phrases-pagination');
   const recordingsStatus = document.getElementById('recordings-status');
   const recordingsTbody = document.getElementById('recordings-tbody');
+  const recordingsPagination = document.getElementById('recordings-pagination');
   const phraseModeFilter = document.getElementById('phrase-mode-filter');
   const phraseStatusFilter = document.getElementById('phrase-status-filter');
   const phrasesSelectAll = document.getElementById('phrases-select-all');
@@ -16,6 +20,8 @@
   let phrasesSelected = new Set();
   let recordingsSelected = new Set();
   let playingFilename = null;
+  let phrasesPage = 0;
+  let recordingsPage = 0;
 
   function escapeHtml(s) {
     return String(s)
@@ -40,6 +46,46 @@
   function recordingUrl(filename, download) {
     const q = download ? '?download=true' : '';
     return `/api/recordings/${encodeURIComponent(filename)}${q}`;
+  }
+
+  function pageSlice(items, page) {
+    const total = items.length;
+    const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    const safePage = Math.min(Math.max(0, page), totalPages - 1);
+    const start = safePage * PAGE_SIZE;
+    return {
+      items: items.slice(start, start + PAGE_SIZE),
+      page: safePage,
+      totalPages,
+      total,
+      start: total ? start + 1 : 0,
+      end: Math.min(start + PAGE_SIZE, total),
+    };
+  }
+
+  function renderPaginationBar(container, slice, onPage) {
+    if (!container) return;
+    if (!slice.total) {
+      container.hidden = true;
+      container.innerHTML = '';
+      return;
+    }
+    container.hidden = slice.totalPages <= 1;
+    if (container.hidden) {
+      container.innerHTML = '';
+      return;
+    }
+    const prevDisabled = slice.page <= 0 ? ' disabled' : '';
+    const nextDisabled = slice.page >= slice.totalPages - 1 ? ' disabled' : '';
+    container.innerHTML =
+      `<span>Showing ${slice.start}–${slice.end} of ${slice.total}</span>` +
+      `<div class="phrases-pagination-actions">` +
+      `<button type="button" class="btn btn-secondary btn-small" data-page-prev${prevDisabled}>Previous</button>` +
+      `<span>Page ${slice.page + 1} of ${slice.totalPages}</span>` +
+      `<button type="button" class="btn btn-secondary btn-small" data-page-next${nextDisabled}>Next</button>` +
+      `</div>`;
+    container.querySelector('[data-page-prev]')?.addEventListener('click', () => onPage(slice.page - 1));
+    container.querySelector('[data-page-next]')?.addEventListener('click', () => onPage(slice.page + 1));
   }
 
   function setPlayState(filename, playing) {
@@ -87,8 +133,16 @@
     });
   }
 
+  function phrasesPageRows() {
+    return pageSlice(filteredPhrases(), phrasesPage);
+  }
+
+  function recordingsPageRows() {
+    return pageSlice(recordingsCache, recordingsPage);
+  }
+
   function updatePhraseSelectionUi() {
-    const visible = filteredPhrases();
+    const visible = phrasesPageRows().items;
     const n = phrasesSelected.size;
     if (btnDeleteSelected) {
       btnDeleteSelected.disabled = n === 0;
@@ -102,15 +156,15 @@
   }
 
   function updateRecordingsSelectionUi() {
+    const visible = recordingsPageRows().items;
     const n = recordingsSelected.size;
     if (btnDeleteRecordings) {
       btnDeleteRecordings.disabled = n === 0;
     }
     if (recordingsSelectAll) {
       const allOnPage =
-        recordingsCache.length > 0 &&
-        recordingsCache.every((r) => recordingsSelected.has(r.filename));
-      const some = recordingsCache.some((r) => recordingsSelected.has(r.filename));
+        visible.length > 0 && visible.every((r) => recordingsSelected.has(r.filename));
+      const some = visible.some((r) => recordingsSelected.has(r.filename));
       recordingsSelectAll.checked = allOnPage;
       recordingsSelectAll.indeterminate = some && !allOnPage;
     }
@@ -133,11 +187,16 @@
   }
 
   function renderPhrases() {
-    const rows = filteredPhrases();
+    const slice = phrasesPageRows();
+    const rows = slice.items;
     if (!phrasesTbody) return;
-    if (!rows.length) {
+    if (!slice.total) {
       phrasesTbody.innerHTML =
         '<tr><td colspan="6" class="phrases-empty">No phrases match the current filters.</td></tr>';
+      renderPaginationBar(phrasesPagination, slice, (page) => {
+        phrasesPage = page;
+        renderPhrases();
+      });
       updatePhraseSelectionUi();
       return;
     }
@@ -161,19 +220,28 @@
         </tr>`;
       })
       .join('');
+    renderPaginationBar(phrasesPagination, slice, (page) => {
+      phrasesPage = page;
+      renderPhrases();
+    });
     if (playingFilename) setPlayState(playingFilename, true);
     updatePhraseSelectionUi();
   }
 
   function renderRecordings() {
+    const slice = recordingsPageRows();
     if (!recordingsTbody) return;
-    if (!recordingsCache.length) {
+    if (!slice.total) {
       recordingsTbody.innerHTML =
         '<tr><td colspan="6" class="phrases-empty">No alert recordings yet. Voice alerts save audio here when new mail arrives.</td></tr>';
+      renderPaginationBar(recordingsPagination, slice, (page) => {
+        recordingsPage = page;
+        renderRecordings();
+      });
       updateRecordingsSelectionUi();
       return;
     }
-    recordingsTbody.innerHTML = recordingsCache
+    recordingsTbody.innerHTML = slice.items
       .map((row) => {
         const file = row.filename || '';
         const checked = recordingsSelected.has(file) ? ' checked' : '';
@@ -190,6 +258,10 @@
         </tr>`;
       })
       .join('');
+    renderPaginationBar(recordingsPagination, slice, (page) => {
+      recordingsPage = page;
+      renderRecordings();
+    });
     if (playingFilename) setPlayState(playingFilename, true);
     updateRecordingsSelectionUi();
   }
@@ -201,6 +273,7 @@
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'Failed to load phrases');
       phrasesCache = data.phrases || [];
+      phrasesPage = 0;
       const recorded = data.recorded || 0;
       const total = data.total || phrasesCache.length;
       if (phrasesStatus) {
@@ -222,7 +295,8 @@
       const res = await fetch('/api/recordings');
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'Failed to load recordings');
-      recordingsCache = (data.recordings || []).filter((row) => row.kind !== 'phrase');
+      recordingsCache = data.recordings || [];
+      recordingsPage = 0;
       if (recordingsStatus) {
         recordingsStatus.textContent = `${recordingsCache.length} alert recording(s) in ${data.directory || 'localrecordings/'}`;
       }
@@ -260,7 +334,8 @@
       if (phrasesStatus) {
         phrasesStatus.textContent = `Generated ${made}, skipped ${skipped}${errCount ? `, ${errCount} error(s)` : ''}.`;
       }
-      await Promise.all([loadPhrases(), loadRecordings()]);
+      await loadPhrases();
+      await loadRecordings();
     } catch (e) {
       if (phrasesStatus) phrasesStatus.textContent = `Generation failed: ${e}`;
     } finally {
@@ -298,12 +373,18 @@
     });
   });
 
-  phraseModeFilter?.addEventListener('change', renderPhrases);
-  phraseStatusFilter?.addEventListener('change', renderPhrases);
+  phraseModeFilter?.addEventListener('change', () => {
+    phrasesPage = 0;
+    renderPhrases();
+  });
+  phraseStatusFilter?.addEventListener('change', () => {
+    phrasesPage = 0;
+    renderPhrases();
+  });
 
   phrasesSelectAll?.addEventListener('change', (e) => {
     const checked = e.target.checked;
-    filteredPhrases().forEach((row) => {
+    phrasesPageRows().items.forEach((row) => {
       if (checked) phrasesSelected.add(row.text);
       else phrasesSelected.delete(row.text);
     });
@@ -315,7 +396,7 @@
 
   recordingsSelectAll?.addEventListener('change', (e) => {
     const checked = e.target.checked;
-    recordingsCache.forEach((row) => {
+    recordingsPageRows().items.forEach((row) => {
       if (checked) recordingsSelected.add(row.filename);
       else recordingsSelected.delete(row.filename);
     });
@@ -338,7 +419,8 @@
         recordingsSelected.delete(f);
       });
       phrasesSelected.clear();
-      await Promise.all([loadPhrases(), loadRecordings()]);
+      await loadPhrases();
+      await loadRecordings();
     } catch (e) {
       if (phrasesStatus) phrasesStatus.textContent = `Delete failed: ${e}`;
     }
@@ -380,7 +462,8 @@
       if (playingFilename === file) stopPlayback();
       try {
         await deleteFiles([file]);
-        await Promise.all([loadPhrases(), loadRecordings()]);
+        await loadPhrases();
+        await loadRecordings();
       } catch (err) {
         if (phrasesStatus) phrasesStatus.textContent = `Delete failed: ${err}`;
       }
@@ -412,5 +495,13 @@
     });
   }
 
-  Promise.all([loadPhrases(), loadRecordings()]);
+  loadPhrases().then(() => {
+    const schedule =
+      typeof requestIdleCallback === 'function'
+        ? (fn) => requestIdleCallback(fn, { timeout: 500 })
+        : (fn) => setTimeout(fn, 0);
+    schedule(() => {
+      loadRecordings();
+    });
+  });
 })();

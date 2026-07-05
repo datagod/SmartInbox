@@ -699,6 +699,28 @@ def create_app(core: SmartInboxCore) -> FastAPI:
             }
         )
 
+    @app.post("/api/pipelines/investigate")
+    async def api_pipelines_investigate(request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        try:
+            list_days = int(body.get("list_days", 30))
+        except (TypeError, ValueError):
+            list_days = 30
+        list_days = max(1, min(list_days, 365))
+        result = await core.investigate_pipelines(list_days=list_days)
+        view = core.get_process_view()
+        return JSONResponse(
+            {
+                "ok": True,
+                **result,
+                "pipeline": view.get("pipeline") or result.get("pipeline") or {},
+                "logs": view.get("logs") or [],
+            }
+        )
+
     @app.post("/api/pipelines/tts-investigate")
     async def api_pipelines_tts_investigate(request: Request):
         try:
@@ -801,6 +823,24 @@ def create_app(core: SmartInboxCore) -> FastAPI:
         if result is None:
             return JSONResponse({"ok": False, "error": "event not found"}, status_code=404)
         return JSONResponse({"ok": True, **result})
+
+    @app.get("/api/calendar/ignored-senders")
+    async def api_calendar_ignored_senders_list():
+        return JSONResponse(
+            {
+                "ok": True,
+                "ignored_senders": core.list_calendar_ignored_senders_for_display(),
+            }
+        )
+
+    @app.delete("/api/calendar/ignored-senders/{sender_key}")
+    async def api_calendar_ignored_senders_remove(sender_key: str):
+        if not core.remove_calendar_ignored_sender_entry(sender_key):
+            return JSONResponse(
+                {"ok": False, "error": "sender not found"},
+                status_code=404,
+            )
+        return JSONResponse({"ok": True, "sender_key": sender_key})
 
     @app.get("/api/tts/voice")
     async def api_tts_voice_get():
@@ -1032,7 +1072,9 @@ def create_app(core: SmartInboxCore) -> FastAPI:
     async def api_recordings_list():
         cache_dir = _recordings_cache_dir()
         root = resolve_recordings_dir(cache_dir)
-        recordings = list_recordings(cache_dir)
+        recordings = [
+            row for row in list_recordings(cache_dir) if row.get("kind") != "phrase"
+        ]
         return JSONResponse(
             {
                 "ok": True,
@@ -1106,6 +1148,7 @@ def create_app(core: SmartInboxCore) -> FastAPI:
     async def api_phrases_catalog():
         cache_dir = _recordings_cache_dir()
         speak_cfg = core.get_event_tts_settings()
+        root = resolve_recordings_dir(cache_dir)
         phrase_files = {
             row["filename"]: row
             for row in list_recordings(cache_dir)
@@ -1117,9 +1160,9 @@ def create_app(core: SmartInboxCore) -> FastAPI:
             mode = entry["mode"]
             spoken = spoken_delivery_phrase(text, mode, tts_model=speak_cfg.get("tts_model"))
             expected = phrase_recording_path(text, mode, settings=speak_cfg)
-            rel_name = str(expected.relative_to(resolve_recordings_dir(cache_dir))).replace("\\", "/")
-            recorded = expected.is_file() and expected.stat().st_size > 0
-            row = phrase_files.get(rel_name) or {}
+            rel_name = str(expected.relative_to(root)).replace("\\", "/")
+            row = phrase_files.get(rel_name)
+            recorded = row is not None
             catalog.append(
                 {
                     "mode": mode,
@@ -1128,8 +1171,8 @@ def create_app(core: SmartInboxCore) -> FastAPI:
                     "spoken_text": spoken,
                     "filename": rel_name if recorded else None,
                     "recorded": recorded,
-                    "size_bytes": row.get("size_bytes") or (expected.stat().st_size if recorded else 0),
-                    "modified_at": row.get("modified_at") or (expected.stat().st_mtime if recorded else None),
+                    "size_bytes": row.get("size_bytes", 0) if row else 0,
+                    "modified_at": row.get("modified_at") if row else None,
                 }
             )
         recorded_count = sum(1 for item in catalog if item["recorded"])
@@ -1413,6 +1456,19 @@ def create_app(core: SmartInboxCore) -> FastAPI:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
         if result is None:
             return JSONResponse({"ok": False, "error": "email not found"}, status_code=404)
+        return JSONResponse({"ok": True, **result})
+
+    @app.post("/api/emails/{email_id}/calendar")
+    async def api_email_calendar(email_id: str, request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        force = bool(body.get("force", True))
+        try:
+            result = await core.extract_calendar_for_email_id(email_id, force=force)
+        except ValueError as e:
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=404)
         return JSONResponse({"ok": True, **result})
 
     @app.post("/api/summarize/{email_id}")

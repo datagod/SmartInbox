@@ -8,6 +8,8 @@
   const eventsListTitle = document.getElementById('events-list-title');
   const calendarStatus = document.getElementById('calendar-status');
   const calendarInboxes = document.getElementById('calendar-inboxes');
+  const calendarIgnoredSenders = document.getElementById('calendar-ignored-senders');
+  const calendarIgnoredList = document.getElementById('calendar-ignored-list');
   const calendarDays = document.getElementById('calendar-days');
   const calendarLookback = document.getElementById('calendar-lookback');
   const calendarLookbackUnit = document.getElementById('calendar-lookback-unit');
@@ -572,7 +574,7 @@
     const downActive = lastVote === 'down' ? ' vote-active' : '';
     return `<div class="event-votes" role="group" aria-label="Rate event">
       <button type="button" class="vote-btn vote-up${upActive}" data-vote="up" title="Keep on calendar" aria-label="Upvote event">▲</button>
-      <button type="button" class="vote-btn vote-down${downActive}" data-vote="down" title="Hide from calendar views" aria-label="Downvote event">▼</button>
+      <button type="button" class="vote-btn vote-down${downActive}" data-vote="down" title="Ignore this sender for future calendar items" aria-label="Downvote event and ignore sender">▼</button>
     </div>`;
   }
 
@@ -857,6 +859,60 @@
     return `${doneText} · ${backlogText} · ${pendingRemaining} overall`;
   }
 
+  function renderIgnoredSenders(entries) {
+    if (!calendarIgnoredList || !calendarIgnoredSenders) return;
+    const rows = Array.isArray(entries) ? entries : [];
+    if (!rows.length) {
+      calendarIgnoredSenders.hidden = true;
+      calendarIgnoredList.innerHTML = '';
+      return;
+    }
+    calendarIgnoredSenders.hidden = false;
+    calendarIgnoredList.innerHTML = rows
+      .map((row) => {
+        const key = escapeHtml(row.sender_key || '');
+        const display = escapeHtml(row.display || row.sender_key || '');
+        return `<li class="calendar-ignored-item">
+          <span>${display}</span>
+          <button type="button" class="btn btn-secondary btn-small" data-ignore-remove="${key}">Allow</button>
+        </li>`;
+      })
+      .join('');
+    calendarIgnoredList.querySelectorAll('[data-ignore-remove]').forEach((btn) => {
+      btn.addEventListener('click', async (ev) => {
+        ev.preventDefault();
+        await removeIgnoredSender(btn.getAttribute('data-ignore-remove'));
+      });
+    });
+  }
+
+  async function loadIgnoredSenders() {
+    try {
+      const res = await fetch('/api/calendar/ignored-senders');
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'Failed to load ignored senders');
+      renderIgnoredSenders(data.ignored_senders);
+    } catch (_) {
+      if (calendarIgnoredSenders) calendarIgnoredSenders.hidden = true;
+    }
+  }
+
+  async function removeIgnoredSender(senderKey) {
+    if (!senderKey) return;
+    try {
+      const res = await fetch(
+        `/api/calendar/ignored-senders/${encodeURIComponent(senderKey)}`,
+        { method: 'DELETE' }
+      );
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || 'Remove failed');
+      await loadIgnoredSenders();
+      await loadCalendar();
+    } catch (e) {
+      if (calendarStatus) calendarStatus.textContent = `Ignored sender error: ${e}`;
+    }
+  }
+
   async function loadCalendar() {
     const days = scanDays();
     const params = new URLSearchParams({
@@ -875,6 +931,7 @@
       renderEventList(data.events);
       renderStatus(data);
       renderQueueSparkline(data.queue);
+      await loadIgnoredSenders();
       if (data.demo_mode) {
         setClearBusy(true, true);
         setReprocessBusy(true, true);
@@ -910,6 +967,7 @@
       });
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'Vote failed');
+      await loadIgnoredSenders();
       await loadCalendar();
     } catch (e) {
       if (calendarStatus) calendarStatus.textContent = `Vote error: ${e}`;

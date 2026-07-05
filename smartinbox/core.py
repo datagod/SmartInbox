@@ -42,6 +42,14 @@ from smartinbox.calendar_events import (
     CALENDAR_QUEUE_SKIP_EVENT_COUNT,
     skip_calendar_backlog_for_emails,
     upsert_calendar_event,
+    add_calendar_ignored_sender,
+    remove_calendar_ignored_sender,
+    is_calendar_sender_ignored,
+    hide_calendar_events_for_sender,
+    unhide_calendar_events_for_sender,
+    skip_calendar_extraction_for_sender,
+    list_calendar_ignored_senders,
+    calendar_extraction_event_counts,
 )
 from smartinbox.calendar_extract import (
     build_calendar_ollama_options,
@@ -292,6 +300,7 @@ class SmartInboxCore:
             if self._demo_mode
             else []
         )
+        self._demo_calendar_ignored_senders: set[str] = set()
         self._calendar_backfill: dict[str, Any] = {
             "running": False,
             "done": 0,
@@ -858,48 +867,165 @@ class SmartInboxCore:
             "demo_mode": self._demo_mode,
         }
 
+    def _apply_calendar_sender_ignore(self, sender: str | None) -> dict[str, Any]:
+        ignored = add_calendar_ignored_sender(self._conn, sender)
+        skipped = skip_calendar_extraction_for_sender(self._conn, sender)
+        hidden = hide_calendar_events_for_sender(self._conn, sender)
+        display = str(ignored.get("display") or sender or "")
+        self.add_log(
+            f"Calendar ignore: {display} — future calendar extraction disabled "
+            f"({skipped} email(s) skipped, {hidden} event(s) hidden)",
+            "info",
+        )
+        return {
+            "ignored_sender": ignored,
+            "skipped_emails": skipped,
+            "hidden_events": hidden,
+        }
+
+    def _clear_calendar_sender_ignore(self, sender: str | None) -> dict[str, Any] | None:
+        from smartinbox.important_senders import display_sender, normalize_sender
+
+        if not remove_calendar_ignored_sender(self._conn, sender):
+            return None
+        unhidden = unhide_calendar_events_for_sender(self._conn, sender)
+        sender_key = normalize_sender(sender)
+        if sender_key:
+            self._demo_calendar_ignored_senders.discard(sender_key)
+        self.add_log(
+            f"Calendar ignore removed: {display_sender(sender)} — "
+            f"new mail from this sender can be scanned again "
+            f"({unhidden} event(s) restored)",
+            "info",
+        )
+        return {"unhidden_events": unhidden}
+
+    def list_calendar_ignored_senders_for_display(self) -> list[dict[str, Any]]:
+        if self._demo_mode:
+            from smartinbox.important_senders import display_sender
+
+            return [
+                {
+                    "sender_key": key,
+                    "display": display_sender(key),
+                    "created_at": time.time(),
+                }
+                for key in sorted(self._demo_calendar_ignored_senders)
+            ]
+        return list_calendar_ignored_senders(self._conn)
+
+    def remove_calendar_ignored_sender_entry(self, sender_key: str) -> bool:
+        from smartinbox.important_senders import display_sender
+
+        key = str(sender_key or "").strip().lower()
+        if not key:
+            return False
+        if self._demo_mode:
+            if key not in self._demo_calendar_ignored_senders:
+                return False
+            self._demo_calendar_ignored_senders.discard(key)
+            self.add_log(
+                f"Calendar ignore removed: {display_sender(key)} (demo)",
+                "info",
+            )
+            return True
+        if not remove_calendar_ignored_sender(self._conn, key):
+            return False
+        self.add_log(
+            f"Calendar ignore removed: {display_sender(key)}",
+            "info",
+        )
+        return True
+
     def vote_calendar_event(self, event_id: str, *, vote: str) -> dict[str, Any] | None:
         if self._demo_mode:
+            from smartinbox.important_senders import normalize_sender, display_sender
+
+            direction = vote.strip().lower()
+            if direction not in ("up", "down"):
+                raise ValueError("vote must be 'up' or 'down'")
+            matched = False
             for index, row in enumerate(self._demo_calendar_events):
-                if str(row.get("id")) == event_id:
-                    direction = vote.strip().lower()
-                    if direction not in ("up", "down"):
-                        raise ValueError("vote must be 'up' or 'down'")
-                    up = int(row.get("upvotes") or 0)
-                    down = int(row.get("downvotes") or 0)
-                    if direction == "up":
-                        up += 1
-                        hidden = False
-                    else:
-                        down += 1
-                        hidden = True
-                    updated = {
-                        **row,
-                        "upvotes": up,
-                        "downvotes": down,
-                        "score": up - down,
-                        "last_vote": direction,
-                        "hidden": hidden,
-                        "updated_at": time.time(),
-                    }
-                    self._demo_calendar_events[index] = updated
-                    label = "Upvoted" if direction == "up" else "Downvoted"
+                if str(row.get("id")) != event_id:
+                    continue
+                matched = True
+                sender = str(row.get("sender") or "")
+                sender_key = normalize_sender(sender)
+                up = int(row.get("upvotes") or 0)
+                down = int(row.get("downvotes") or 0)
+                if direction == "up":
+                    up += 1
+                    hidden = False
+                    if sender_key:
+                        self._demo_calendar_ignored_senders.discard(sender_key)
+                        for j, ev in enumerate(self._demo_calendar_events):
+                            if normalize_sender(str(ev.get("sender") or "")) == sender_key:
+                                self._demo_calendar_events[j] = {
+                                    **ev,
+                                    "hidden": False,
+                                    "updated_at": time.time(),
+                                }
+                else:
+                    down += 1
+                    hidden = True
+                    if sender_key:
+                        self._demo_calendar_ignored_senders.add(sender_key)
+                        for j, ev in enumerate(self._demo_calendar_events):
+                            if normalize_sender(str(ev.get("sender") or "")) == sender_key:
+                                self._demo_calendar_events[j] = {
+                                    **ev,
+                                    "hidden": True,
+                                    "last_vote": "down",
+                                    "updated_at": time.time(),
+                                }
+                updated = {
+                    **row,
+                    "upvotes": up,
+                    "downvotes": down,
+                    "score": up - down,
+                    "last_vote": direction,
+                    "hidden": hidden,
+                    "updated_at": time.time(),
+                }
+                self._demo_calendar_events[index] = updated
+                label = "Upvoted" if direction == "up" else "Downvoted"
+                self.add_log(
+                    f"{label} calendar event: {updated.get('title')} (score {updated['score']:+d})",
+                    "info",
+                )
+                result: dict[str, Any] = {"event_id": event_id, "interest": updated}
+                if direction == "down" and sender_key:
                     self.add_log(
-                        f"{label} calendar event: {updated.get('title')} (score {updated['score']:+d})",
+                        f"Calendar ignore: {display_sender(sender)} — "
+                        "future calendar extraction disabled (demo)",
                         "info",
                     )
-                    return {"event_id": event_id, "interest": updated}
-            return None
+                    result["ignored_sender"] = {
+                        "sender_key": sender_key,
+                        "display": display_sender(sender),
+                    }
+                return result
+            if not matched:
+                return None
         try:
             entry = record_event_vote(self._conn, event_id, vote=vote)
         except ValueError:
             return None
+        sender = str(entry.get("sender") or "")
+        result = {"event_id": event_id, "interest": entry}
+        if vote == "down" and sender:
+            result.update(self._apply_calendar_sender_ignore(sender))
+        elif vote == "up" and sender:
+            cleared = self._clear_calendar_sender_ignore(sender)
+            if cleared is not None:
+                result["ignored_sender_removed"] = True
+                result.update(cleared)
         label = "Upvoted" if vote == "up" else "Downvoted"
         self.add_log(
             f"{label} calendar event: {entry.get('title')} (score {entry['score']:+d})",
             "info",
         )
-        return {"event_id": event_id, "interest": entry}
+        return result
 
     def remove_calendar_event(self, event_id: str) -> dict[str, Any] | None:
         """Delete a calendar event without recording a downvote."""
@@ -935,6 +1061,7 @@ class SmartInboxCore:
         index: int | None = None,
         total: int | None = None,
         except_email_id: str | None = None,
+        manual: bool = False,
     ) -> int:
         email_id = str(msg.get("id") or "")
         if not email_id:
@@ -949,7 +1076,30 @@ class SmartInboxCore:
         progress = f"[{index}/{total}] " if index is not None and total is not None else ""
         ref_ts = float(msg.get("received_at") or time.time())
 
-        if is_sender_downvoted(self._conn, sender):
+        if not manual:
+            from smartinbox.important_senders import normalize_sender
+
+            sender_key = normalize_sender(sender)
+            sender_ignored = (
+                bool(sender_key and sender_key in self._demo_calendar_ignored_senders)
+                if self._demo_mode
+                else is_calendar_sender_ignored(self._conn, sender)
+            )
+            if sender_ignored:
+                if not self._demo_mode:
+                    mark_email_extracted(
+                        self._conn,
+                        email_id,
+                        event_count=CALENDAR_QUEUE_SKIP_EVENT_COUNT,
+                    )
+                self.add_log(
+                    f"Calendar extract {progress}{provider_label}: "
+                    f"skipped — ignored for calendar — {subject}",
+                    "info",
+                )
+                return 0
+
+        if not manual and is_sender_downvoted(self._conn, sender):
             mark_email_extracted(
                 self._conn,
                 email_id,
@@ -1922,6 +2072,365 @@ class SmartInboxCore:
             result["message"] = str(result.get("message") or "") + note
         return result
 
+    async def investigate_pipelines(self, *, list_days: int = 30) -> dict[str, Any]:
+        """Diagnose summary/calendar pipeline backlog and stalled workers."""
+        checks: list[dict[str, Any]] = []
+        issues: list[str] = []
+        warnings: list[str] = []
+        recommendations: list[str] = []
+
+        def add_check(
+            check_id: str,
+            label: str,
+            ok: bool,
+            detail: str,
+            *,
+            severity: str = "error",
+        ) -> None:
+            checks.append(
+                {"id": check_id, "label": label, "ok": ok, "detail": detail, "severity": severity}
+            )
+            if ok:
+                return
+            text = f"{label}: {detail}"
+            if severity == "warning":
+                warnings.append(text)
+            else:
+                issues.append(text)
+
+        self._clear_stale_backfill_state()
+        list_days = max(1, min(int(list_days), 365))
+        pipeline = self.get_pipeline_status(list_days=list_days)
+        queue = pipeline.get("queue") or {}
+        sum_bf = pipeline.get("summary_backfill") or {}
+        cal_bf = pipeline.get("calendar_backfill") or {}
+        ollama_cfg = pipeline.get("ollama") or {}
+        llm_timings = pipeline.get("llm_timings") or {}
+
+        summary_pending = int(queue.get("summary_pending") or 0)
+        calendar_pending = int(queue.get("pending") or 0)
+        summary_running = bool(
+            pipeline.get("summary_backfill_active")
+            or sum_bf.get("running")
+        )
+        calendar_running = bool(
+            queue.get("calendar_scan_running") or cal_bf.get("running")
+        )
+        blocked_by_summary = bool(queue.get("blocked_by_summary"))
+        mail_fetch = dict(self._mail_fetch_job)
+        mail_fetch_running = bool(mail_fetch.get("running"))
+
+        if self._demo_mode:
+            add_check(
+                "demo_mode",
+                "Demo mode",
+                False,
+                "live mail pipelines disabled — showing sample data only",
+                severity="warning",
+            )
+        else:
+            add_check("demo_mode", "Demo mode", True, "off")
+
+        mail = mail_accounts_status(self._conn)
+        connected = [a for a in (mail.get("accounts") or []) if a.get("connected")]
+        if connected:
+            labels = ", ".join(
+                f"{a.get('label') or a.get('provider')}: {a.get('email')}"
+                for a in connected
+            )
+            add_check("mail_accounts", "Mail accounts", True, labels)
+        else:
+            add_check(
+                "mail_accounts",
+                "Mail accounts",
+                False,
+                "no IMAP account connected — connect Gmail or Proton in Settings",
+            )
+            recommendations.append("Connect a mail account in Settings so inbox polling can run.")
+
+        if self._running:
+            poll_note = f"every {int(self._poll_interval)}s"
+            if self._last_poll_at:
+                ago = max(0, int(time.time() - float(self._last_poll_at)))
+                poll_note += f", last poll {ago}s ago"
+            add_check("inbox_polling", "Inbox polling", True, poll_note)
+        else:
+            add_check(
+                "inbox_polling",
+                "Inbox polling",
+                False,
+                "SmartInbox poll loop is not running — restart the service",
+            )
+            recommendations.append(
+                "Restart SmartInbox (systemctl --user restart smartinbox) if polling stopped."
+            )
+
+        if summary_pending > 0:
+            if summary_running:
+                progress = f"{sum_bf.get('done') or 0} / {sum_bf.get('total') or '…'}"
+                add_check(
+                    "summary_backlog",
+                    "Summary backlog",
+                    True,
+                    f"{summary_pending} unsummarized — worker active ({progress})",
+                    severity="warning",
+                )
+            else:
+                add_check(
+                    "summary_backlog",
+                    "Summary backlog",
+                    False,
+                    f"{summary_pending} unsummarized and summary worker is idle",
+                )
+                recommendations.append(
+                    "Click Kickstart pipelines to resume the summary backfill worker."
+                )
+        else:
+            add_check("summary_backlog", "Summary backlog", True, "queue empty")
+
+        if calendar_pending > 0:
+            if calendar_running:
+                progress = f"{cal_bf.get('done') or 0} / {cal_bf.get('total') or '…'}"
+                phase = "import" if cal_bf.get("phase") == "import" else "scan"
+                add_check(
+                    "calendar_backlog",
+                    "Calendar backlog",
+                    True,
+                    f"{calendar_pending} pending extraction — {phase} active ({progress})",
+                    severity="warning",
+                )
+            elif blocked_by_summary and summary_pending > 0:
+                add_check(
+                    "calendar_backlog",
+                    "Calendar backlog",
+                    True,
+                    f"{calendar_pending} waiting — calendar LLM deferred until summaries finish",
+                    severity="warning",
+                )
+                recommendations.append(
+                    "Calendar extraction waits for the summary queue to clear; "
+                    "let summary backfill finish or use Kickstart pipelines."
+                )
+            else:
+                add_check(
+                    "calendar_backlog",
+                    "Calendar backlog",
+                    False,
+                    f"{calendar_pending} pending calendar extraction and worker is idle",
+                )
+                recommendations.append(
+                    "Click Kickstart pipelines to resume the calendar scan worker."
+                )
+        else:
+            add_check("calendar_backlog", "Calendar backlog", True, "queue empty")
+
+        if blocked_by_summary and summary_pending > 0 and not summary_running:
+            add_check(
+                "calendar_blocked",
+                "Calendar blocked by summaries",
+                False,
+                f"{summary_pending} summaries still pending but summary worker is not running",
+            )
+        elif blocked_by_summary and summary_pending > 0:
+            add_check(
+                "calendar_blocked",
+                "Calendar blocked by summaries",
+                True,
+                f"expected while {summary_pending} summaries remain",
+                severity="warning",
+            )
+        else:
+            add_check("calendar_blocked", "Calendar blocked by summaries", True, "not blocked")
+
+        if mail_fetch_running:
+            fetch_note = (
+                f"{mail_fetch.get('phase') or 'running'}: "
+                f"{mail_fetch.get('done') or 0} / {mail_fetch.get('total') or '…'}"
+            )
+            add_check(
+                "mail_fetch_job",
+                "Mail fetch job",
+                True,
+                fetch_note,
+                severity="warning",
+            )
+        else:
+            add_check("mail_fetch_job", "Mail fetch job", True, "idle")
+
+        base_url = str(ollama_cfg.get("base_url") or self.get_ollama_base_url())
+        model = str(ollama_cfg.get("model") or self.get_ollama_model())
+        try:
+            probe = await probe_ollama(
+                base_url, model, timeout=min(12.0, float(self.get_ollama_timeout()))
+            )
+            if probe.get("reachable"):
+                if probe.get("model_listed"):
+                    add_check(
+                        "ollama",
+                        "Ollama",
+                        True,
+                        f"{base_url} — {model} available ({probe.get('models_found', 0)} models)",
+                    )
+                else:
+                    add_check(
+                        "ollama",
+                        "Ollama",
+                        False,
+                        str(probe.get("error") or f"{model} not listed — run ollama pull"),
+                    )
+                    recommendations.append(
+                        f"Load the summary model: ollama pull {model}"
+                    )
+            else:
+                add_check(
+                    "ollama",
+                    "Ollama",
+                    False,
+                    str(probe.get("error") or f"cannot reach {base_url}"),
+                )
+                recommendations.append(
+                    f"Start Ollama and confirm it listens at {base_url}."
+                )
+        except Exception as e:
+            add_check("ollama", "Ollama", False, str(e))
+
+        summary_stats = llm_timings.get("summary") or {}
+        if summary_stats.get("last_success") is False:
+            add_check(
+                "summary_llm",
+                "Recent summary LLM",
+                False,
+                f"last call failed after {summary_stats.get('last_sec') or '?'}s",
+            )
+        elif summary_stats.get("avg_sec") and float(summary_stats["avg_sec"]) > 90:
+            add_check(
+                "summary_llm",
+                "Recent summary LLM",
+                True,
+                f"slow — avg {summary_stats['avg_sec']}s per summary",
+                severity="warning",
+            )
+        elif summary_stats.get("count"):
+            add_check(
+                "summary_llm",
+                "Recent summary LLM",
+                True,
+                f"avg {summary_stats.get('avg_sec') or '—'}s over {summary_stats.get('count')} calls",
+            )
+        else:
+            add_check("summary_llm", "Recent summary LLM", True, "no recent samples")
+
+        cal_stats = llm_timings.get("calendar") or {}
+        if cal_stats.get("last_success") is False:
+            add_check(
+                "calendar_llm",
+                "Recent calendar LLM",
+                False,
+                f"last call failed after {cal_stats.get('last_sec') or '?'}s",
+            )
+        elif cal_stats.get("count"):
+            add_check(
+                "calendar_llm",
+                "Recent calendar LLM",
+                True,
+                f"avg {cal_stats.get('avg_sec') or '—'}s over {cal_stats.get('count')} calls",
+            )
+        else:
+            add_check("calendar_llm", "Recent calendar LLM", True, "no recent samples")
+
+        concurrency = int(ollama_cfg.get("summary_concurrency") or 1)
+        if summary_pending > 50 and concurrency <= 1:
+            add_check(
+                "summary_concurrency",
+                "Summary concurrency",
+                True,
+                f"{concurrency} parallel job — large backlog may drain slowly",
+                severity="warning",
+            )
+        else:
+            add_check(
+                "summary_concurrency",
+                "Summary concurrency",
+                True,
+                f"{concurrency} parallel summar{'y' if concurrency == 1 else 'ies'}",
+            )
+
+        active_tasks = int(pipeline.get("email_tasks_active") or 0)
+        if active_tasks:
+            add_check(
+                "email_tasks",
+                "Background tasks",
+                True,
+                f"{active_tasks} active",
+                severity="warning",
+            )
+        else:
+            add_check("email_tasks", "Background tasks", True, "none")
+
+        pipeline_log_markers = (
+            "Pipeline",
+            "summary",
+            "Summary",
+            "Calendar",
+            "calendar",
+            "Ollama",
+            "backfill",
+            "Kickstart",
+            "reprocess",
+            "unsummarized",
+        )
+        recent_pipeline_logs = [
+            {
+                "ts": str(entry.get("ts") or ""),
+                "level": str(entry.get("level") or "info"),
+                "message": str(entry.get("message") or ""),
+            }
+            for entry in self.log_entries
+            if any(marker in str(entry.get("message") or "") for marker in pipeline_log_markers)
+        ][-12:]
+
+        has_backlog = summary_pending > 0 or calendar_pending > 0
+        healthy = not issues
+        if issues:
+            message = f"{len(issues)} issue{'s' if len(issues) != 1 else ''}: " + "; ".join(
+                issues[:4]
+            )
+            if len(issues) > 4:
+                message += f" (+{len(issues) - 4} more)"
+        elif has_backlog and (summary_running or calendar_running):
+            message = "Backlog is processing — workers are active"
+        elif has_backlog and warnings:
+            message = f"Backlog present — {len(warnings)} note{'s' if len(warnings) != 1 else ''}"
+        elif warnings:
+            message = f"OK with {len(warnings)} note{'s' if len(warnings) != 1 else ''}"
+        else:
+            message = "No pipeline backlog — queues are clear"
+
+        level = "info" if healthy else "warning"
+        self.add_log(f"Pipeline investigate: {message}", level)
+        for issue in issues:
+            self.add_log(f"Pipeline investigate — {issue}", "warning")
+        for note in warnings:
+            self.add_log(f"Pipeline investigate — note: {note}", "info")
+        for tip in recommendations:
+            self.add_log(f"Pipeline investigate — fix: {tip}", "warning")
+
+        return {
+            "healthy": healthy,
+            "message": message,
+            "checks": checks,
+            "issues": issues,
+            "warnings": warnings,
+            "recommendations": recommendations,
+            "recent_pipeline_logs": recent_pipeline_logs,
+            "pipeline": pipeline,
+            "summary_pending": summary_pending,
+            "calendar_pending": calendar_pending,
+            "summary_running": summary_running,
+            "calendar_running": calendar_running,
+            "blocked_by_summary": blocked_by_summary,
+        }
+
     async def investigate_tts(self, *, test_synthesis: bool = True) -> dict[str, Any]:
         """Run TTS health checks: config, Chatterbox reachability, voice, and optional synthesis."""
         checks: list[dict[str, Any]] = []
@@ -2422,10 +2931,32 @@ class SmartInboxCore:
         self._notify_emails()
         return self._demo_mode
 
+    def _enrich_inbox_email_rows(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        email_ids = [str(row.get("id") or "") for row in rows if row.get("id")]
+        counts = calendar_extraction_event_counts(self._conn, email_ids)
+        enriched: list[dict[str, Any]] = []
+        for row in rows:
+            data = dict(row)
+            email_id = str(data.get("id") or "")
+            count = counts.get(email_id)
+            data["calendar_extracted"] = count is not None
+            data["calendar_event_count"] = (
+                max(0, int(count)) if count is not None and count >= 0 else 0
+            )
+            enriched.append(data)
+        return enriched
+
     def list_emails_for_display(self, *, limit: int = 50) -> list[dict[str, Any]]:
         if self._demo_mode:
-            return [dict(row) for row in self._demo_emails[:limit]]
-        return list_emails(self._conn, limit=limit)
+            rows = [dict(row) for row in self._demo_emails[:limit]]
+        else:
+            rows = list_emails(self._conn, limit=limit)
+        if self._demo_mode:
+            for row in rows:
+                row.setdefault("calendar_extracted", False)
+                row.setdefault("calendar_event_count", 0)
+            return rows
+        return self._enrich_inbox_email_rows(rows)
 
     def get_email_for_display(self, email_id: str) -> dict[str, Any] | None:
         if self._demo_mode:
@@ -2483,7 +3014,12 @@ class SmartInboxCore:
             raise ValueError("email not found")
         if force:
             reset_calendar_data_for_emails(self._conn, [email_id])
-        events_found = await self._extract_calendar_for_email(msg)
+        events_found = await self._extract_calendar_for_email(
+            msg,
+            except_email_id=email_id,
+            manual=True,
+        )
+        self._notify_emails()
         return {
             "email_id": email_id,
             "events_found": events_found,

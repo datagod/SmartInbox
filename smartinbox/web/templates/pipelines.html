@@ -80,8 +80,8 @@
             <button type="button" class="btn btn-primary" id="btn-kickstart-pipelines">
               Kickstart pipelines
             </button>
-            <button type="button" class="btn btn-secondary" id="btn-investigate-tts">
-              Investigate TTS
+            <button type="button" class="btn btn-secondary" id="btn-investigate-pipelines">
+              Investigate pipelines
             </button>
             <button type="button" class="btn btn-secondary" id="btn-restart-chatterbox">
               Restart Chatterbox
@@ -89,13 +89,15 @@
             <p class="set-hint process-kickstart-hint">
               <strong>Kickstart</strong> resumes stalled summary and calendar workers, checks for
               missed mail, and does <em>not</em> clear queues or reset existing summaries.
-              <strong>Investigate TTS</strong> checks Chatterbox connectivity, alert settings,
-              voice config, and runs a short test synthesis.
+              <strong>Investigate pipelines</strong> checks summary and calendar backlog,
+              stalled workers, mail polling, and Ollama health.
               <strong>Restart Chatterbox</strong> restarts the TTS Docker container and re-runs
               investigate — use when synthesis fails with CUDA or HTTP 500 errors.
             </p>
           </div>
           <p class="calendar-status" id="process-kickstart-status"></p>
+          <p class="calendar-status" id="process-pipeline-investigate-status"></p>
+          <dl class="storage-dl process-tts-investigate-results" id="process-pipeline-investigate-results" hidden></dl>
           <p class="calendar-status" id="process-tts-investigate-status"></p>
           <dl class="storage-dl process-tts-investigate-results" id="process-tts-investigate-results" hidden></dl>
           <div class="process-pipeline-stats" id="process-pipeline-stats">
@@ -254,6 +256,6 @@
   </div>
   <script src="/static/js/alerts.js?v=1"></script>
   <script src="/static/js/activity-log-resize.js?v=4"></script>
-  <script src="/static/js/process.js?v=17"></script>
+  <script src="/static/js/process.js?v=19"></script>
 </body>
 </html>

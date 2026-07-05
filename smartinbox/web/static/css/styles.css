@@ -344,16 +344,52 @@ body.inbox-keyboard-nav .email-item.spam-likely.selected {
 .email-item-actions {
   display: flex;
   align-items: center;
+  gap: 0.35rem;
   flex-shrink: 0;
   margin-left: auto;
   padding-left: 0.5rem;
 }
+.email-item-actions .btn-add-calendar,
 .email-item-actions .btn-hide-email {
-  opacity: 0.7;
+  opacity: 0.82;
 }
+.email-item:hover .email-item-actions .btn-add-calendar,
 .email-item:hover .email-item-actions .btn-hide-email,
+.email-item.selected .email-item-actions .btn-add-calendar,
 .email-item.selected .email-item-actions .btn-hide-email {
   opacity: 1;
+}
+.inbox-cal-badge {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.calendar-ignored-senders {
+  margin-top: 0.5rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.calendar-ignored-label {
+  margin: 0 0 0.25rem;
+  font-weight: 600;
+}
+
+.calendar-ignored-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.65rem;
+}
+
+.calendar-ignored-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
 }
 .email-subject { font-size: 0.95rem; font-weight: 500; }
 .email-meta { font-family: var(--mono); font-size: 0.68rem; color: var(--muted); margin-top: 0.2rem; }
@@ -761,6 +797,23 @@ body.is-resizing-activity-log-corner {
 .phrases-toolbar-bottom { margin-top: 0.75rem; margin-bottom: 0; }
 .phrases-filter { min-width: 160px; margin: 0; }
 .phrases-actions { margin-top: 0; }
+.phrases-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  margin-top: 0.65rem;
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+
+.phrases-pagination-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .phrases-status {
   font-family: var(--mono);
   font-size: 0.78rem;

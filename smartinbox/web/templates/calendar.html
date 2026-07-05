@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SmartInbox — Calendar</title>
   <link rel="icon" href="/static/img/smartinbox-icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/css/styles.css?v=23">
+  <link rel="stylesheet" href="/static/css/styles.css?v=24">
 </head>
 <body>
   <div class="set-app calendar-app">
@@ -38,9 +38,14 @@
                 stored mail in the lookback window. <strong>Re-process</strong> resets extraction and runs
                 date extraction again. Use
                 <a href="/pipelines">Pipelines</a> to import new mail. Parallel extractions are set in
-                <a href="/settings">Settings</a>. Downvoted events are hidden from calendar views.
+                <a href="/settings">Settings</a>. Downvoting an event ignores that sender for future
+                calendar extraction. Upvoting restores hidden events from that sender.
               </p>
               <p class="calendar-inboxes" id="calendar-inboxes"></p>
+              <div class="calendar-ignored-senders" id="calendar-ignored-senders" hidden>
+                <p class="calendar-ignored-label">Ignored for calendar:</p>
+                <ul class="calendar-ignored-list" id="calendar-ignored-list"></ul>
+              </div>
             </div>
             <div class="calendar-actions">
               <div class="process-lookback-field calendar-lookback-field">
@@ -158,6 +163,6 @@
   </div>
   <script src="/static/js/alerts.js?v=1"></script>
   <script src="/static/js/activity-log-resize.js?v=4"></script>
-  <script src="/static/js/calendar.js?v=16"></script>
+  <script src="/static/js/calendar.js?v=18"></script>
 </body>
 </html>

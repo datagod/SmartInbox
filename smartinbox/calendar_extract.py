@@ -20,8 +20,8 @@ Rules:
 - Include webinar and Zoom invites (e.g. "join us on June 27, 2026 at 10:00 AM Pacific Time").
 - Put destination phrases such as "Go to Perth" in location when present.
 - If no date/time is mentioned, omit the event.
-- If time is missing, use 09:00 local on that day.
-- source_text must be a short verbatim phrase from the email supporting the date.
+- Include start time only when the email states one explicitly (e.g. "at 2:30 PM", "7:00pm", "14:00"). Never invent or default a time.
+- source_text must be a short verbatim phrase from the email supporting the date and time.
 - If no events found, return {"events":[]}."""
 
 
@@ -54,6 +54,20 @@ Subject: {subject}
 Body:
 {body_trim}
 """
+
+
+_SOURCE_TIME_RE = re.compile(
+    r"(?i)"
+    r"(?:\bat\s+)?\d{1,2}:\d{2}(?::\d{2})?\s*(?:am|pm)?|"
+    r"(?:\bat\s+)?\d{1,2}\s*(?:am|pm)|"
+    r"\d{1,2}:\d{2}(?:am|pm)|"
+    r"\d{4}-\d{2}-\d{2}[ T]\d{1,2}:\d{2}|"
+    r"T\d{1,2}:\d{2}"
+)
+
+
+def _source_has_explicit_time(text: str) -> bool:
+    return bool(_SOURCE_TIME_RE.search(str(text or "")))
 
 
 def _strip_json_fences(text: str) -> str:
@@ -118,7 +132,7 @@ def parse_extracted_events(
             else None
         )
         source_text = str(item.get("source_text") or "").strip() or None
-        if not source_text:
+        if not source_text or not _source_has_explicit_time(source_text):
             continue
         event_id = make_event_id(email_id, title, start_ts)
         results.append(
