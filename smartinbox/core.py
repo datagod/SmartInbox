@@ -51,16 +51,20 @@ from smartinbox.calendar_events import (
     list_calendar_ignored_senders,
     calendar_extraction_event_counts,
 )
+from smartinbox.mail_source_url import enrich_email_source_url
+from smartinbox.calendar_body import (
+    build_calendar_llm_context,
+    calendar_events_are_confident,
+    filter_confident_calendar_events,
+    preprocess_email_calendar_events,
+    should_call_calendar_llm,
+)
+from smartinbox.calendar_datefinder import parse_datefinder_calendar_events
 from smartinbox.calendar_extract import (
     build_calendar_ollama_options,
     extract_calendar_events,
     list_loaded_ollama_models,
     preload_ollama_model,
-)
-from smartinbox.calendar_body import (
-    build_calendar_llm_context,
-    preprocess_email_calendar_events,
-    should_call_calendar_llm,
 )
 from smartinbox.calendar_ics import parse_ics_calendar_events
 from smartinbox.demo_data import build_demo_calendar_events, build_demo_emails
@@ -90,6 +94,8 @@ from smartinbox.db import (
     reset_summary_data_for_emails,
     skip_summary_backlog_for_emails,
     count_unsummarized_emails_since,
+    DOWNVOTED_SENDER_SKIP_MARKER,
+    SPAM_SKIP_MARKER,
     mark_email_alerted,
     set_email_starred,
     set_setting,
@@ -132,7 +138,14 @@ from smartinbox.email_summary import (
     resolve_system_prompt,
     summarize_email,
 )
-from smartinbox.email_spam import DEFAULT_SPAM_MODEL, classify_email_spam
+from smartinbox.email_spam import (
+    DEFAULT_SPAM_THRESHOLD,
+    DEFAULT_SPAM_TIMEOUT,
+    DEFAULT_SPAMD_HOST,
+    DEFAULT_SPAMD_PORT,
+    classify_email_spam,
+    probe_spamassassin,
+)
 from smartinbox.voice_summary import (
     brief_summary_for_tts,
     default_voice_style_prompt,
@@ -189,6 +202,7 @@ class SmartInboxCore:
         self.timezone = str(s.get("timezone", "America/New_York"))
         self.gmail_config: dict[str, Any] = dict(s.get("gmail") or {})
         self.ollama_config: dict[str, Any] = dict(s.get("ollama") or {})
+        self.spam_config: dict[str, Any] = dict(s.get("spam") or {})
         self.calendar_config: dict[str, Any] = dict(s.get("calendar") or {})
         self.chatterbox_tts_config = chatterbox_settings_from_config(s.get("chatterbox_tts"))
         # SmartInbox-specific keys on chatterbox config
@@ -220,14 +234,8 @@ class SmartInboxCore:
             if saved_model and str(saved_model).strip()
             else str(self.ollama_config.get("model", "qwen2.5:3b"))
         )
-        saved_spam_model = get_setting(self._conn, "spam_ollama_model")
-        self._spam_ollama_model = (
-            str(saved_spam_model).strip()
-            if saved_spam_model and str(saved_spam_model).strip()
-            else str(self.ollama_config.get("spam_model", DEFAULT_SPAM_MODEL)).strip()
-            or self._ollama_model
-        )
-        self._spam_ollama_main_gpu = self._load_spam_ollama_main_gpu()
+        self._spam_threshold = self._load_spam_threshold()
+        self._ollama_main_gpu = self._load_ollama_main_gpu()
         default_concurrency = int(self.calendar_config.get("extract_concurrency", 6))
         saved_concurrency = get_setting(self._conn, "calendar_extract_concurrency")
         try:
@@ -345,6 +353,30 @@ class SmartInboxCore:
             "spam": deque(maxlen=48),
             "calendar": deque(maxlen=48),
         }
+        self_heal_cfg = dict(s.get("self_heal") or {})
+        self._self_heal_enabled = bool(self_heal_cfg.get("enabled", True))
+        self._self_heal_interval = max(
+            60.0, float(self_heal_cfg.get("interval_sec", 300))
+        )
+        self._self_heal_ollama_cooldown = max(
+            60.0, float(self_heal_cfg.get("ollama_cooldown_sec", 600))
+        )
+        self._self_heal_tts_cooldown = max(
+            60.0, float(self_heal_cfg.get("tts_restart_cooldown_sec", 1800))
+        )
+        self._self_heal_calendar_days = max(
+            1, min(int(self_heal_cfg.get("calendar_days", 30)), 365)
+        )
+        self._self_heal_task: asyncio.Task[None] | None = None
+        self._self_heal_last_action_at: dict[str, float] = {}
+        self._tts_failure_samples: deque[dict[str, Any]] = deque(maxlen=32)
+        self._last_self_heal_result: dict[str, Any] = {
+            "healthy": True,
+            "actions": [],
+            "issues": [],
+            "at": None,
+            "reason": None,
+        }
         self._last_alert_at = 0.0
         self._last_poll_at: float | None = None
 
@@ -410,44 +442,59 @@ class SmartInboxCore:
                 continue
             return
 
-    def _load_spam_ollama_main_gpu(self) -> int | None:
-        saved = get_setting(self._conn, "spam_ollama_main_gpu")
-        if saved is None:
-            cfg = self.ollama_config.get("spam_main_gpu")
-            if cfg is None or cfg == "":
-                return 0
-            try:
-                gpu = int(cfg)
-            except (TypeError, ValueError):
-                return 0
-            if gpu < 0:
-                return None
-            return max(0, min(15, gpu))
+    @staticmethod
+    def _normalize_ollama_main_gpu(
+        value: Any, *, default_gpu: int = 1, allow_gpu_zero: bool = False
+    ) -> int | None:
         try:
-            gpu = int(saved)
+            gpu = int(value)
         except (TypeError, ValueError):
-            return 0
+            return default_gpu
         if gpu < 0:
             return None
+        if gpu == 0 and not allow_gpu_zero:
+            gpu = default_gpu
         return max(0, min(15, gpu))
+
+    def _load_ollama_main_gpu(self) -> int | None:
+        """Host GPU index from config (remapped for dedicated Ollama containers)."""
+        cfg = self.ollama_config.get("main_gpu")
+        if cfg is None or cfg == "":
+            return 0
+        return self._normalize_ollama_main_gpu(
+            cfg, default_gpu=0, allow_gpu_zero=True
+        )
+
+    def _load_spam_threshold(self) -> float:
+        saved = get_setting(self._conn, "spam_threshold")
+        if saved is not None:
+            try:
+                return max(0.0, min(20.0, float(saved)))
+            except (TypeError, ValueError):
+                pass
+        cfg = self.spam_config.get("threshold")
+        if cfg is not None and cfg != "":
+            try:
+                return max(0.0, min(20.0, float(cfg)))
+            except (TypeError, ValueError):
+                pass
+        return DEFAULT_SPAM_THRESHOLD
 
     def _load_calendar_ollama_main_gpu(self) -> int | None:
         saved = get_setting(self._conn, "calendar_ollama_main_gpu")
-        if saved is None:
-            cfg = self.calendar_config.get("ollama_main_gpu")
-            if cfg is None or cfg == "":
-                return None
-            try:
-                return max(0, min(15, int(cfg)))
-            except (TypeError, ValueError):
-                return None
-        try:
-            gpu = int(saved)
-        except (TypeError, ValueError):
-            return None
-        if gpu < 0:
-            return None
-        return max(0, min(15, gpu))
+        if saved is not None:
+            gpu = self._normalize_ollama_main_gpu(
+                saved, default_gpu=0, allow_gpu_zero=True
+            )
+            if gpu is not None and int(saved) == 0:
+                set_setting(self._conn, "calendar_ollama_main_gpu", gpu)
+            return gpu
+        cfg = self.calendar_config.get("ollama_main_gpu")
+        if cfg is not None and cfg != "":
+            return self._normalize_ollama_main_gpu(
+                cfg, default_gpu=0, allow_gpu_zero=True
+            )
+        return self.get_ollama_main_gpu()
 
     @staticmethod
     def _log_subject(subject: str | None, *, max_len: int = 56) -> str:
@@ -737,6 +784,237 @@ class SmartInboxCore:
             }
         )
 
+    def _record_tts_failure(self, error: str) -> None:
+        self._tts_failure_samples.append(
+            {"ts": time.time(), "error": str(error or "").strip()}
+        )
+
+    @staticmethod
+    def _is_healable_component_error(error: str) -> bool:
+        text = str(error or "").lower()
+        return any(
+            marker in text
+            for marker in (
+                "timeout",
+                "timed out",
+                "cuda",
+                "device-side assert",
+                "http 500",
+                "500",
+                "connection",
+                "refused",
+                "unreachable",
+                "failed to synthesize",
+                "terminated",
+            )
+        )
+
+    def _self_heal_action_ready(self, action: str, cooldown_sec: float) -> bool:
+        last = self._self_heal_last_action_at.get(action)
+        if last is None:
+            return True
+        return time.time() - last >= cooldown_sec
+
+    def _mark_self_heal_action(self, action: str) -> None:
+        self._self_heal_last_action_at[action] = time.time()
+
+    def _recent_llm_failures(
+        self, *, within_sec: float = 600.0, min_failures: int = 2
+    ) -> dict[str, int]:
+        now = time.time()
+        counts: dict[str, int] = {}
+        for kind, samples in self._llm_timing_samples.items():
+            fails = [
+                sample
+                for sample in samples
+                if not sample.get("success")
+                and now - float(sample.get("ts") or 0) < within_sec
+            ]
+            if len(fails) >= min_failures:
+                counts[kind] = len(fails)
+        return counts
+
+    def _recent_tts_failures(self, *, within_sec: float = 900.0) -> list[dict[str, Any]]:
+        now = time.time()
+        return [
+            sample
+            for sample in self._tts_failure_samples
+            if now - float(sample.get("ts") or 0) < within_sec
+        ]
+
+    def get_self_heal_status(self) -> dict[str, Any]:
+        last = dict(self._last_self_heal_result)
+        return {
+            "enabled": self._self_heal_enabled,
+            "interval_sec": self._self_heal_interval,
+            "ollama_cooldown_sec": self._self_heal_ollama_cooldown,
+            "tts_restart_cooldown_sec": self._self_heal_tts_cooldown,
+            "calendar_days": self._self_heal_calendar_days,
+            "last_run_at": last.get("at"),
+            "last_reason": last.get("reason"),
+            "last_healthy": last.get("healthy"),
+            "last_actions": list(last.get("actions") or []),
+            "last_issues": list(last.get("issues") or []),
+            "recent_llm_failures": self._recent_llm_failures(),
+            "recent_tts_failures": len(self._recent_tts_failures()),
+        }
+
+    async def run_self_heal(self, *, reason: str = "scheduled") -> dict[str, Any]:
+        """Detect LLM/TTS timeouts and stalled pipelines; recover when possible."""
+        actions: list[str] = []
+        issues: list[str] = []
+        if self._demo_mode:
+            result = {
+                "healthy": True,
+                "actions": actions,
+                "issues": issues,
+                "at": time.time(),
+                "reason": reason,
+                "message": "Demo mode — self-heal disabled",
+            }
+            self._last_self_heal_result = result
+            return result
+
+        self._clear_stale_backfill_state()
+        calendar_days = self._self_heal_calendar_days
+        since_ts = time.time() - calendar_days * 86400
+        summary_pending = count_unsummarized_emails(self._conn)
+        calendar_pending = count_emails_pending_calendar_extraction(
+            self._conn, since_ts=since_ts
+        )
+        summary_running = self._summary_worker_active()
+        calendar_running = self._calendar_worker_active()
+        blocked_by_summary = self._calendar_llm_deferred_by_summary()
+
+        if summary_pending > 0 and not summary_running:
+            issues.append(f"{summary_pending} unsummarized and summary worker idle")
+        if calendar_pending > 0 and not calendar_running and not (
+            blocked_by_summary and summary_pending > 0
+        ):
+            issues.append(
+                f"{calendar_pending} pending calendar extraction and worker idle"
+            )
+
+        kickstart = self.kickstart_pipeline_workers(calendar_days=calendar_days)
+        if kickstart.get("summary_started") or kickstart.get("calendar_started"):
+            actions.append("kickstart_pipelines")
+
+        llm_failures = self._recent_llm_failures()
+        ollama_probe: dict[str, Any] | None = None
+        try:
+            ollama_probe = await probe_ollama(
+                self.get_ollama_base_url(),
+                self.get_ollama_model(),
+                timeout=min(12.0, float(self.get_ollama_timeout())),
+            )
+        except Exception as e:
+            ollama_probe = {"reachable": False, "error": str(e)}
+
+        ollama_unreachable = not bool((ollama_probe or {}).get("reachable"))
+        if ollama_unreachable:
+            issues.append(
+                f"Ollama unreachable: {(ollama_probe or {}).get('error') or 'probe failed'}"
+            )
+
+        needs_ollama_heal = ollama_unreachable or bool(llm_failures)
+        if needs_ollama_heal and self._self_heal_action_ready(
+            "ollama_recover", self._self_heal_ollama_cooldown
+        ):
+            if ollama_unreachable:
+                actions.append("ollama_probe_failed")
+            if llm_failures:
+                kinds = ", ".join(f"{k} ({n})" for k, n in sorted(llm_failures.items()))
+                issues.append(f"Recent LLM failures: {kinds}")
+            try:
+                await self._warm_ollama_models()
+                actions.append("ollama_warm")
+            except Exception as e:
+                issues.append(f"Ollama warm failed: {e}")
+            retry = self.kickstart_pipeline_workers(calendar_days=calendar_days)
+            if retry.get("summary_started") or retry.get("calendar_started"):
+                if "kickstart_pipelines" not in actions:
+                    actions.append("kickstart_pipelines")
+            self._mark_self_heal_action("ollama_recover")
+
+        tts_enabled = bool(self.chatterbox_tts_config.get("enabled"))
+        tts_recent = self._recent_tts_failures()
+        healable_tts = [
+            sample
+            for sample in tts_recent
+            if self._is_healable_component_error(str(sample.get("error") or ""))
+        ]
+        chatterbox_down = False
+        if tts_enabled and self._alerts_enabled:
+            try:
+                await get_chatterbox_model_info(self.get_event_tts_settings())
+            except Exception as e:
+                chatterbox_down = True
+                issues.append(f"Chatterbox unreachable: {e}")
+
+        needs_tts_heal = tts_enabled and (
+            chatterbox_down or len(healable_tts) >= 1
+        )
+        docker_container = self.get_chatterbox_docker_container()
+        if needs_tts_heal and docker_container and self._self_heal_action_ready(
+            "tts_restart", self._self_heal_tts_cooldown
+        ):
+            restart = await self.restart_chatterbox_tts(verify=False, wait_timeout=90.0)
+            if restart.get("ok"):
+                actions.append("tts_restart")
+                self._mark_self_heal_action("tts_restart")
+            else:
+                issues.append(
+                    f"TTS restart failed: {restart.get('error') or 'unknown'}"
+                )
+        elif needs_tts_heal and not docker_container:
+            issues.append(
+                "TTS failures detected but chatterbox_tts.docker_container is not set"
+            )
+
+        healthy = not issues or bool(actions)
+        if actions:
+            message = "Recovered: " + ", ".join(actions)
+            level = "info"
+        elif issues:
+            message = "Issues remain: " + "; ".join(issues[:3])
+            if len(issues) > 3:
+                message += f" (+{len(issues) - 3} more)"
+            level = "warning"
+        else:
+            message = "All checks passed"
+            level = "info"
+
+        self.add_log(f"Self-heal ({reason}): {message}", level)
+        for issue in issues:
+            if issue not in {f"Recovered: {a}" for a in actions}:
+                self.add_log(f"Self-heal — {issue}", "warning")
+
+        result = {
+            "healthy": healthy,
+            "actions": actions,
+            "issues": issues,
+            "at": time.time(),
+            "reason": reason,
+            "message": message,
+            "summary_pending": summary_pending,
+            "calendar_pending": calendar_pending,
+            "ollama_reachable": not ollama_unreachable,
+            "llm_failures": llm_failures,
+            "recent_tts_failures": len(tts_recent),
+        }
+        self._last_self_heal_result = result
+        return result
+
+    async def _self_heal_loop(self) -> None:
+        await asyncio.sleep(min(90.0, self._self_heal_interval))
+        while self._running:
+            try:
+                if self._self_heal_enabled:
+                    await self.run_self_heal(reason="scheduled")
+            except Exception as e:
+                self.add_log(f"Self-heal loop error: {e}", "warning")
+            await asyncio.sleep(self._self_heal_interval)
+
     def _llm_timing_stats(self) -> dict[str, Any]:
         out: dict[str, Any] = {}
         for kind, samples in self._llm_timing_samples.items():
@@ -783,14 +1061,19 @@ class SmartInboxCore:
             "ollama": {
                 "base_url": self.get_ollama_base_url(),
                 "model": self.get_ollama_model(),
-                "spam_model": self.get_spam_ollama_model(),
                 "timeout": self.get_ollama_timeout(),
                 "summary_concurrency": self._summary_concurrency,
                 "calendar_concurrency": self.get_calendar_extract_concurrency(),
-                "spam_gpu": self.get_spam_ollama_main_gpu(),
                 "calendar_gpu": self.get_calendar_ollama_main_gpu(),
             },
+            "spam": {
+                "engine": "spamassassin",
+                "threshold": self.get_spam_threshold(),
+                "use_spamd": self.get_spam_use_spamd(),
+                "command": self.get_spam_command(),
+            },
             "llm_timings": self._llm_timing_stats(),
+            "self_heal": self.get_self_heal_status(),
         }
 
     def get_calendar_queue_stats(self, *, list_days: int = 30) -> dict[str, Any]:
@@ -1065,7 +1348,7 @@ class SmartInboxCore:
     ) -> int:
         email_id = str(msg.get("id") or "")
         if not email_id:
-            return 0
+            return {"events_found": 0, "message": "missing email id"}
         provider = str(msg.get("provider") or "mail").strip().lower() or "mail"
         provider_label = {"gmail": "Gmail", "proton": "Proton"}.get(
             provider, provider.title()
@@ -1075,6 +1358,7 @@ class SmartInboxCore:
         mail_subject = str(msg.get("subject") or "")
         progress = f"[{index}/{total}] " if index is not None and total is not None else ""
         ref_ts = float(msg.get("received_at") or time.time())
+        action = "Calendar re-scan" if manual else "Calendar extract"
 
         if not manual:
             from smartinbox.important_senders import normalize_sender
@@ -1093,11 +1377,11 @@ class SmartInboxCore:
                         event_count=CALENDAR_QUEUE_SKIP_EVENT_COUNT,
                     )
                 self.add_log(
-                    f"Calendar extract {progress}{provider_label}: "
+                    f"{action} {progress}{provider_label}: "
                     f"skipped — ignored for calendar — {subject}",
                     "info",
                 )
-                return 0
+                return {"events_found": 0, "message": "ignored for calendar"}
 
         if not manual and is_sender_downvoted(self._conn, sender):
             mark_email_extracted(
@@ -1106,11 +1390,11 @@ class SmartInboxCore:
                 event_count=CALENDAR_QUEUE_SKIP_EVENT_COUNT,
             )
             self.add_log(
-                f"Calendar extract {progress}{provider_label}: "
+                f"{action} {progress}{provider_label}: "
                 f"skipped — downvoted sender — {subject}",
                 "info",
             )
-            return 0
+            return {"events_found": 0, "message": "downvoted sender"}
 
         ics_text = str(msg.get("calendar_ics") or "").strip()
         if not ics_text and not self._demo_mode:
@@ -1162,22 +1446,44 @@ class SmartInboxCore:
             )
             if events and preprocess_source:
                 source = preprocess_source
+            events = filter_confident_calendar_events(events)
 
-        if not events and should_call_calendar_llm(
-            body_text,
-            mail_subject,
-            summary_text or None,
-            events_found=bool(events),
-        ):
-            if self._calendar_llm_deferred_by_summary(
-                except_email_id=except_email_id
+        if not calendar_events_are_confident(events):
+            events, library_source = parse_datefinder_calendar_events(
+                body=body_text,
+                subject=mail_subject,
+                summary=summary_text or None,
+                email_id=email_id,
+                sender=sender,
+                timezone=self.timezone,
+                reference_ts=ref_ts,
+            )
+            if events and library_source:
+                source = library_source
+            events = filter_confident_calendar_events(events)
+
+        needs_llm = not calendar_events_are_confident(events) and (
+            manual
+            or should_call_calendar_llm(
+                body_text,
+                mail_subject,
+                summary_text or None,
+                events_found=False,
+            )
+        )
+        if needs_llm:
+            if (
+                not manual
+                and self._calendar_llm_deferred_by_summary(
+                    except_email_id=except_email_id
+                )
             ):
                 self.add_log(
-                    f"Calendar extract {progress}{provider_label}: "
+                    f"{action} {progress}{provider_label}: "
                     f"LLM deferred — awaiting summaries — {subject}",
                     "info",
                 )
-                return 0
+                return {"events_found": 0, "message": "awaiting summaries"}
             llm_body = build_calendar_llm_context(
                 body_text, mail_subject, summary_text or None
             )
@@ -1210,25 +1516,42 @@ class SmartInboxCore:
             upsert_calendar_event(self._conn, event)
             saved += 1
         mark_email_extracted(self._conn, email_id, event_count=saved)
+        result_message = ""
         if saved:
             via = f" ({source})" if source else ""
+            result_message = (
+                f"found {saved} event{'s' if saved != 1 else ''}{via}"
+            )
             self.add_log(
-                f"Calendar extract {progress}{provider_label}: "
-                f"found {saved} event{'s' if saved != 1 else ''}{via} — {subject}",
+                f"{action} {progress}{provider_label}: "
+                f"{result_message} — {subject}",
                 "info",
             )
         elif err:
+            result_message = f"failed — {err}"
             self.add_log(
-                f"Calendar extract {progress}{provider_label} failed — {subject}: {err}",
+                f"{action} {progress}{provider_label} {result_message} — {subject}",
                 "warning",
             )
         else:
-            note = "no dates" if used_llm else "no date signals — skipped LLM"
+            if manual:
+                result_message = "no dates found — not added to calendar"
+            elif used_llm:
+                result_message = "no dates found"
+            else:
+                result_message = "no date signals — skipped LLM"
+            level = "warning" if manual else "info"
             self.add_log(
-                f"Calendar extract {progress}{provider_label}: {note} — {subject}",
-                "info",
+                f"{action} {progress}{provider_label}: "
+                f"{result_message} — {subject}",
+                level,
             )
-        return saved
+        return {
+            "events_found": saved,
+            "source": source,
+            "error": err,
+            "message": result_message,
+        }
 
     async def import_mail_from_sources(self, days: int) -> dict[str, int]:
         """Pull mail from connected IMAP accounts into the local DB for calendar scanning."""
@@ -1660,7 +1983,12 @@ class SmartInboxCore:
                         for j, msg in enumerate(batch)
                     )
                 )
-                events_found += sum(results)
+                events_found += sum(
+                    int(r.get("events_found", 0))
+                    if isinstance(r, dict)
+                    else int(r or 0)
+                    for r in results
+                )
                 done = min(i + len(batch), total)
                 self._calendar_backfill["done"] = done
                 pending = count_emails_pending_calendar_extraction(
@@ -2943,7 +3271,7 @@ class SmartInboxCore:
             data["calendar_event_count"] = (
                 max(0, int(count)) if count is not None and count >= 0 else 0
             )
-            enriched.append(data)
+            enriched.append(enrich_email_source_url(data))
         return enriched
 
     def list_emails_for_display(self, *, limit: int = 50) -> list[dict[str, Any]]:
@@ -2964,7 +3292,10 @@ class SmartInboxCore:
                 if str(row.get("id")) == email_id:
                     return dict(row)
             return None
-        return get_email(self._conn, email_id)
+        row = get_email(self._conn, email_id)
+        if row is None:
+            return None
+        return enrich_email_source_url(row)
 
     def search_emails(
         self,
@@ -3012,19 +3343,37 @@ class SmartInboxCore:
         msg = get_email(self._conn, email_id)
         if msg is None:
             raise ValueError("email not found")
+        subject = self._log_subject(str(msg.get("subject") or "(no subject)"))
         if force:
             reset_calendar_data_for_emails(self._conn, [email_id])
-        events_found = await self._extract_calendar_for_email(
+            self.add_log(f"Calendar re-scan started — {subject}", "info")
+        result = await self._extract_calendar_for_email(
             msg,
             except_email_id=email_id,
-            manual=True,
+            manual=force,
         )
+        events_found = int(result.get("events_found", 0))
+        detail = str(result.get("message") or "").strip()
+        if force and detail:
+            message = f"Calendar re-scan: {detail} — {subject}"
+        elif events_found > 0:
+            message = (
+                f"Calendar: added {events_found} event"
+                f"{'s' if events_found != 1 else ''} — {subject}"
+            )
+        elif detail:
+            message = f"Calendar: {detail} — {subject}"
+        else:
+            message = f"Calendar: no dates found — {subject}"
         self._notify_emails()
         return {
             "email_id": email_id,
             "events_found": events_found,
             "calendar_extracted": True,
             "subject": msg.get("subject"),
+            "message": message,
+            "source": result.get("source") or "",
+            "error": result.get("error"),
         }
 
     def _update_demo_email(self, email_id: str, **fields: Any) -> dict[str, Any] | None:
@@ -3328,55 +3677,63 @@ class SmartInboxCore:
         set_setting(self._conn, "ollama_model", name)
         return self._ollama_model
 
-    def get_config_default_spam_model(self) -> str:
-        return str(self.ollama_config.get("spam_model", DEFAULT_SPAM_MODEL))
+    def get_config_default_spam_threshold(self) -> float:
+        cfg = self.spam_config.get("threshold")
+        if cfg is not None and cfg != "":
+            try:
+                return max(0.0, min(20.0, float(cfg)))
+            except (TypeError, ValueError):
+                pass
+        return DEFAULT_SPAM_THRESHOLD
 
-    def get_spam_ollama_model(self) -> str:
-        return self._spam_ollama_model
+    def get_spam_threshold(self) -> float:
+        return self._spam_threshold
 
-    def set_spam_ollama_model(self, model: str | None) -> str:
-        name = str(model or "").strip()
-        if not name:
-            raise ValueError("spam model required")
-        self._spam_ollama_model = name
-        set_setting(self._conn, "spam_ollama_model", name)
-        return self._spam_ollama_model
+    def set_spam_threshold(self, value: int | float | str) -> float:
+        try:
+            threshold = float(value)
+        except (TypeError, ValueError):
+            raise ValueError("spam threshold must be a number") from None
+        self._spam_threshold = max(0.0, min(20.0, threshold))
+        set_setting(self._conn, "spam_threshold", self._spam_threshold)
+        return self._spam_threshold
 
-    def get_spam_ollama_main_gpu(self) -> int | None:
-        return self._spam_ollama_main_gpu
+    def get_spam_command(self) -> str | None:
+        cmd = str(self.spam_config.get("command") or "").strip()
+        return cmd or None
 
-    def get_spam_ollama_options(self) -> dict[str, Any]:
-        from smartinbox.email_spam import build_spam_ollama_options
+    def get_spam_use_spamd(self) -> bool:
+        return bool(self.spam_config.get("use_spamd", False))
 
-        # CPU inference — loading a second GPU model evicts qwen2.5vl and crashes Ollama.
-        return build_spam_ollama_options()
+    def get_spam_spamd_host(self) -> str:
+        return str(self.spam_config.get("spamd_host") or DEFAULT_SPAMD_HOST).strip()
+
+    def get_spam_spamd_port(self) -> int:
+        try:
+            return max(1, min(65535, int(self.spam_config.get("spamd_port", DEFAULT_SPAMD_PORT))))
+        except (TypeError, ValueError):
+            return DEFAULT_SPAMD_PORT
+
+    def get_spam_timeout(self) -> float:
+        cfg = self.spam_config.get("timeout")
+        if cfg is not None and cfg != "":
+            try:
+                return max(5.0, float(cfg))
+            except (TypeError, ValueError):
+                pass
+        return DEFAULT_SPAM_TIMEOUT
+
+    def get_ollama_main_gpu(self) -> int | None:
+        return self._ollama_main_gpu
 
     def get_summary_ollama_options(self) -> dict[str, Any]:
-        # main_gpu pin crashes qwen2.5vl on this host — let Ollama pick the device.
-        return build_summary_ollama_options()
+        from smartinbox.ollama_options import resolve_main_gpu_for_request
 
-    def set_spam_ollama_main_gpu(self, value: int | float | str | None) -> int | None:
-        if value is None or value == "" or str(value).strip().lower() == "auto":
-            self._spam_ollama_main_gpu = None
-            set_setting(self._conn, "spam_ollama_main_gpu", -1)
-            self.add_log("Spam Ollama GPU set to auto (Ollama scheduler)", "info")
-            return None
-        try:
-            gpu = int(value)
-        except (TypeError, ValueError):
-            raise ValueError("GPU index must be an integer") from None
-        if gpu < 0:
-            self._spam_ollama_main_gpu = None
-            set_setting(self._conn, "spam_ollama_main_gpu", -1)
-            self.add_log("Spam Ollama GPU set to auto (Ollama scheduler)", "info")
-            return None
-        self._spam_ollama_main_gpu = max(0, min(15, gpu))
-        set_setting(self._conn, "spam_ollama_main_gpu", self._spam_ollama_main_gpu)
-        self.add_log(
-            f"Spam Ollama GPU set to GPU {self._spam_ollama_main_gpu}",
-            "info",
+        gpu = resolve_main_gpu_for_request(
+            self.get_ollama_main_gpu(),
+            base_url=self.get_ollama_base_url(),
         )
-        return self._spam_ollama_main_gpu
+        return build_summary_ollama_options(main_gpu=gpu)
 
     def get_calendar_extract_concurrency(self) -> int:
         return self._calendar_extract_concurrency
@@ -3385,7 +3742,13 @@ class SmartInboxCore:
         return self._calendar_ollama_main_gpu
 
     def get_calendar_ollama_options(self) -> dict[str, Any]:
-        return build_calendar_ollama_options()
+        from smartinbox.ollama_options import resolve_main_gpu_for_request
+
+        gpu = resolve_main_gpu_for_request(
+            self.get_calendar_ollama_main_gpu(),
+            base_url=self.get_ollama_base_url(),
+        )
+        return build_calendar_ollama_options(main_gpu=gpu)
 
     def set_calendar_ollama_main_gpu(self, value: int | float | str | None) -> int | None:
         if value is None or value == "" or str(value).strip().lower() == "auto":
@@ -3402,6 +3765,8 @@ class SmartInboxCore:
             set_setting(self._conn, "calendar_ollama_main_gpu", -1)
             self.add_log("Calendar Ollama GPU set to auto (Ollama scheduler)", "info")
             return None
+        if gpu == 0:
+            gpu = 1
         self._calendar_ollama_main_gpu = max(0, min(15, gpu))
         set_setting(self._conn, "calendar_ollama_main_gpu", self._calendar_ollama_main_gpu)
         self.add_log(
@@ -3457,43 +3822,10 @@ class SmartInboxCore:
         await self._start_calendar_backfill_when_ready(days=30)
 
     async def _warm_ollama_models(self) -> None:
-        """Preload the summary/calendar model; spam loads on CPU on first check."""
+        """Preload summary/calendar models on GPU."""
         if self._demo_mode:
             return
         await self._preload_calendar_ollama_model()
-
-    async def _preload_spam_ollama_model(self) -> None:
-        model = self.get_spam_ollama_model()
-        options = self.get_spam_ollama_options()
-        gpu = self.get_spam_ollama_main_gpu()
-        loaded, list_err = await list_loaded_ollama_models(
-            self.get_ollama_base_url(), timeout=8.0
-        )
-        if not list_err and model_matches_listed(
-            model, [str(m.get("name") or "") for m in loaded]
-        ):
-            gpu_note = f" on GPU {gpu}" if gpu is not None else ""
-            self.add_log(
-                f"Spam: {model} already loaded in Ollama VRAM{gpu_note}",
-                "info",
-            )
-            return
-        if gpu is not None:
-            self.add_log(f"Spam: loading {model} on GPU {gpu}…", "info")
-        else:
-            self.add_log(f"Spam: loading {model} on CPU…", "info")
-        async with self._ollama_slot():
-            err = await preload_ollama_model(
-                base_url=self.get_ollama_base_url(),
-                model=model,
-                options=options,
-                keep_alive=-1,
-                timeout=self.get_ollama_timeout(),
-            )
-        if err:
-            self.add_log(f"Spam Ollama preload failed: {err}", "warning")
-        elif gpu is not None:
-            self.add_log(f"Spam: {model} ready on GPU {gpu}", "info")
 
     def set_calendar_extract_concurrency(self, value: int | float | str) -> int:
         try:
@@ -3667,10 +3999,18 @@ class SmartInboxCore:
             )
         await self.poll_inbox()
         self._poll_task = asyncio.create_task(self._poll_loop())
+        self._self_heal_task = asyncio.create_task(self._self_heal_loop())
         self._track_email_task(self._startup_ollama_pipeline())
 
     async def stop(self) -> None:
         self._running = False
+        if self._self_heal_task:
+            self._self_heal_task.cancel()
+            try:
+                await self._self_heal_task
+            except asyncio.CancelledError:
+                pass
+            self._self_heal_task = None
         if self._poll_task:
             self._poll_task.cancel()
             try:
@@ -4067,6 +4407,26 @@ class SmartInboxCore:
         except Exception as e:
             self.add_log(f"Calendar extract failed — {subject}: {e}", "warning")
 
+    def _skip_email_llm_pipeline(
+        self,
+        msg: dict[str, Any],
+        *,
+        marker: str,
+        log_message: str,
+    ) -> None:
+        """Leave summary/calendar queues without running any Ollama work."""
+        email_id = str(msg.get("id") or "")
+        if not email_id:
+            return
+        skip_summary_backlog_for_emails(self._conn, [email_id], marker=marker)
+        mark_email_extracted(
+            self._conn,
+            email_id,
+            event_count=CALENDAR_QUEUE_SKIP_EVENT_COUNT,
+        )
+        self.add_log(log_message, "info")
+        self._notify_emails()
+
     async def _classify_email_spam(self, msg: dict[str, Any]) -> bool | None:
         """Return True if spam, False if not, None if check failed."""
         email_id = str(msg.get("id") or "")
@@ -4075,27 +4435,19 @@ class SmartInboxCore:
         sender = str(msg.get("sender") or "")
         subject = self._log_subject(str(msg.get("subject") or "(no subject)"))
         if is_sender_downvoted(self._conn, sender):
-            self.add_log(
-                f"Spam check skipped — downvoted sender — {subject}",
-                "info",
-            )
             return False
-        spam_model = self.get_spam_ollama_model()
         t0 = time.monotonic()
-        async with self._ollama_slot():
-            is_spam, err = await classify_email_spam(
-                base_url=self.get_ollama_base_url(),
-                model=spam_model,
-                sender=sender,
-                subject=str(msg.get("subject") or ""),
-                body=str(msg.get("body_text") or msg.get("snippet") or ""),
-                summary=str(
-                    msg.get("summary_detailed") or msg.get("summary_short") or ""
-                ).strip()
-                or None,
-                ollama_options=self.get_spam_ollama_options(),
-                timeout=self.get_ollama_timeout(),
-            )
+        is_spam, err, score = await classify_email_spam(
+            sender=sender,
+            subject=str(msg.get("subject") or ""),
+            body=str(msg.get("body_text") or msg.get("snippet") or ""),
+            threshold=self.get_spam_threshold(),
+            command=self.get_spam_command(),
+            use_spamd=self.get_spam_use_spamd(),
+            spamd_host=self.get_spam_spamd_host(),
+            spamd_port=self.get_spam_spamd_port(),
+            timeout=self.get_spam_timeout(),
+        )
         self._record_llm_timing("spam", time.monotonic() - t0, success=err is None)
         if err:
             self.add_log(
@@ -4105,15 +4457,18 @@ class SmartInboxCore:
             return None
         update_email_spam(self._conn, email_id, is_spam=bool(is_spam))
         msg["is_spam"] = 1 if is_spam else 0
-        gpu_note = ", CPU"
+        score_note = f", score {score:.1f}" if score is not None else ""
+        threshold = self.get_spam_threshold()
         if is_spam:
             self.add_log(
-                f"Spam check: junk — no voice alert for {subject} ({spam_model}{gpu_note})",
+                f"Spam check: junk — no voice alert for {subject} "
+                f"(SpamAssassin{score_note} ≥ {threshold:.1f})",
                 "info",
             )
         else:
             self.add_log(
-                f"Spam check: not spam — {subject} ({spam_model}{gpu_note})",
+                f"Spam check: not spam — {subject} "
+                f"(SpamAssassin{score_note} < {threshold:.1f})",
                 "info",
             )
         return bool(is_spam)
@@ -4123,7 +4478,25 @@ class SmartInboxCore:
     ) -> None:
         subject = str(msg.get("subject") or "(no subject)")
         email_id = str(msg.get("id") or "")
+        sender = str(msg.get("sender") or "")
         try:
+            if is_sender_downvoted(self._conn, sender):
+                self._skip_email_llm_pipeline(
+                    msg,
+                    marker=DOWNVOTED_SENDER_SKIP_MARKER,
+                    log_message=f"Skipped LLM — downvoted sender — {subject}",
+                )
+                return
+
+            is_spam = await self._classify_email_spam(msg)
+            if is_spam:
+                self._skip_email_llm_pipeline(
+                    msg,
+                    marker=SPAM_SKIP_MARKER,
+                    log_message=f"Skipped summary — classified as spam — {subject}",
+                )
+                return
+
             async with self._email_summary_semaphore:
                 self._summary_in_flight += 1
                 try:
@@ -4132,7 +4505,7 @@ class SmartInboxCore:
                         summary, err = await summarize_email(
                             base_url=self.get_ollama_base_url(),
                             model=self.get_ollama_model(),
-                            sender=str(msg.get("sender") or ""),
+                            sender=sender,
                             subject=str(msg.get("subject") or ""),
                             body=str(msg.get("body_text") or msg.get("snippet") or ""),
                             system_prompt=self._summary_system_prompt,
@@ -4161,12 +4534,7 @@ class SmartInboxCore:
                     self.add_log(f"Summary failed: {err}", "warning")
                     if "500" in str(err) or "terminated" in str(err).lower():
                         await asyncio.sleep(15)
-
-            is_spam = None
-            if summary:
-                is_spam = await self._classify_email_spam(msg)
-            if is_spam:
-                return
+                    return
 
             await self._process_new_email_calendar(msg, except_email_id=email_id)
 
@@ -4270,6 +4638,7 @@ class SmartInboxCore:
                         summary=summary_source,
                         system_prompt=style_prompt,
                         timeout=self.get_ollama_timeout(),
+                        ollama_options=self.get_summary_ollama_options(),
                     )
                 debug["llm_response"] = styled
                 debug["llm_error"] = style_err
@@ -4647,6 +5016,7 @@ class SmartInboxCore:
             }
         except Exception as e:
             self.add_log(f"TTS alert failed: {e}", "warning")
+            self._record_tts_failure(str(e))
             return None
 
     async def summarize_one(self, email_id: str) -> tuple[str | None, str | None]:
@@ -4670,6 +5040,24 @@ class SmartInboxCore:
         models, err = await list_ollama_models(base_url)
         selected = self.get_ollama_model()
         names = [m["name"] for m in models]
+        try:
+            spam_status = await probe_spamassassin(
+                command=self.get_spam_command(),
+                use_spamd=self.get_spam_use_spamd(),
+                spamd_host=self.get_spam_spamd_host(),
+                spamd_port=self.get_spam_spamd_port(),
+            )
+        except Exception as exc:
+            spam_status = {
+                "available": False,
+                "engine": "spamassassin",
+                "use_spamd": self.get_spam_use_spamd(),
+                "command": self.get_spam_command(),
+                "version": None,
+                "error": str(exc),
+            }
+        spam_status["threshold"] = self.get_spam_threshold()
+        spam_status["config_default_threshold"] = self.get_config_default_spam_threshold()
         return {
             "base_url": base_url,
             "reachable": err is None,
@@ -4678,14 +5066,7 @@ class SmartInboxCore:
             "selected_model": selected,
             "config_default_model": self.get_config_default_model(),
             "model_listed": model_matches_listed(selected, names) if err is None else False,
-            "spam_model": self.get_spam_ollama_model(),
-            "config_default_spam_model": self.get_config_default_spam_model(),
-            "spam_model_listed": model_matches_listed(
-                self.get_spam_ollama_model(), names
-            )
-            if err is None
-            else False,
-            "spam_main_gpu": self.get_spam_ollama_main_gpu(),
+            "spam": spam_status,
             "system_prompt": self.get_summary_system_prompt(),
             "custom_system_prompt": self.get_custom_summary_system_prompt(),
             "default_system_prompt": self.get_default_summary_system_prompt(),

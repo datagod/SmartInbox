@@ -366,31 +366,6 @@ body.inbox-keyboard-nav .email-item.spam-likely.selected {
   font-weight: 600;
 }
 
-.calendar-ignored-senders {
-  margin-top: 0.5rem;
-  font-size: 0.82rem;
-  color: var(--muted);
-}
-
-.calendar-ignored-label {
-  margin: 0 0 0.25rem;
-  font-weight: 600;
-}
-
-.calendar-ignored-list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem 0.65rem;
-}
-
-.calendar-ignored-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-}
 .email-subject { font-size: 0.95rem; font-weight: 500; }
 .email-meta { font-family: var(--mono); font-size: 0.68rem; color: var(--muted); margin-top: 0.2rem; }
 
@@ -969,6 +944,11 @@ body.is-resizing-activity-log-corner {
   font-size: 0.8rem;
   text-align: right;
   font-weight: 600;
+}
+.col-action {
+  width: 6.5rem;
+  text-align: right;
+  white-space: nowrap;
 }
 .vote-count-up { color: var(--success); font-weight: 600; }
 .vote-count-down { color: var(--error); font-weight: 600; }

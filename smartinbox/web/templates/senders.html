@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SmartInbox — Senders</title>
   <link rel="icon" href="/static/img/smartinbox-icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/css/styles.css?v=23">
+  <link rel="stylesheet" href="/static/css/styles.css?v=25">
 </head>
 <body>
   <div class="set-app senders-app">
@@ -14,7 +14,7 @@
         <img src="/static/img/smartinbox-icon.svg" alt="" class="brand-icon" width="32" height="32">
         SmartInbox
       </h1>
-      <p class="subtitle">Sender rankings from inbox votes</p>
+      <p class="subtitle">Sender rankings and calendar ignore list</p>
       <nav class="site-nav" aria-label="Site">
         <a href="/">Inbox</a>
         <a href="/search">Search</a>
@@ -78,8 +78,32 @@
         <button type="button" class="btn btn-secondary" id="btn-refresh-senders">Refresh</button>
       </div>
     </section>
+
+    <section class="set-panel">
+      <h2>Ignored for calendar</h2>
+      <p class="set-hint">
+        Senders downvoted on the <a href="/calendar">Calendar</a> page. Their mail is skipped
+        during automatic calendar extraction. Click <strong>Allow</strong> to resume extraction
+        and show hidden events from that sender again.
+      </p>
+      <p class="senders-status" id="calendar-ignored-status"></p>
+      <div class="senders-table-wrap">
+        <table class="senders-table" id="calendar-ignored-table">
+          <thead>
+            <tr>
+              <th class="col-rank">#</th>
+              <th class="col-sender">Sender</th>
+              <th class="col-action">Action</th>
+            </tr>
+          </thead>
+          <tbody id="calendar-ignored-tbody">
+            <tr><td colspan="3" class="senders-empty">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
   </div>
   <script src="/static/js/alerts.js?v=1"></script>
-  <script src="/static/js/senders.js?v=1"></script>
+  <script src="/static/js/senders.js?v=2"></script>
 </body>
 </html>

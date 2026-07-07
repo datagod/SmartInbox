@@ -76,6 +76,8 @@ def _ensure_email_account_columns(conn: sqlite3.Connection) -> None:
         ("calendar_ics", "ALTER TABLE emails ADD COLUMN calendar_ics TEXT"),
         ("is_spam", "ALTER TABLE emails ADD COLUMN is_spam INTEGER"),
         ("sender_key", "ALTER TABLE emails ADD COLUMN sender_key TEXT"),
+        ("imap_uid", "ALTER TABLE emails ADD COLUMN imap_uid TEXT"),
+        ("rfc822_message_id", "ALTER TABLE emails ADD COLUMN rfc822_message_id TEXT"),
     ):
         if name not in cols:
             conn.execute(ddl)
@@ -155,8 +157,9 @@ def upsert_email(conn: sqlite3.Connection, email: dict[str, Any]) -> str:
         INSERT INTO emails (
             id, thread_id, account_id, account_email, provider,
             sender, sender_key, subject, snippet, body_text, calendar_ics,
+            imap_uid, rfc822_message_id,
             received_at, summary_short, summary_detailed, alerted_at, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             email["id"],
@@ -170,6 +173,8 @@ def upsert_email(conn: sqlite3.Connection, email: dict[str, Any]) -> str:
             email.get("snippet"),
             email.get("body_text"),
             ics,
+            email.get("imap_uid"),
+            email.get("rfc822_message_id"),
             email.get("received_at"),
             email.get("summary_short"),
             email.get("summary_detailed"),
@@ -232,11 +237,18 @@ def list_emails(conn: sqlite3.Connection, *, limit: int = 50) -> list[dict[str, 
     return [dict(r) for r in rows]
 
 
+def _unsummarized_sql_clause() -> str:
+    return """
+        (summary_detailed IS NULL OR TRIM(summary_detailed) = '')
+        AND COALESCE(is_spam, 0) = 0
+    """
+
+
 def count_unsummarized_emails(conn: sqlite3.Connection) -> int:
     row = conn.execute(
-        """
+        f"""
         SELECT COUNT(*) FROM emails
-        WHERE summary_detailed IS NULL OR TRIM(summary_detailed) = ''
+        WHERE {_unsummarized_sql_clause()}
         """
     ).fetchone()
     return int(row[0]) if row else 0
@@ -246,9 +258,9 @@ def list_unsummarized_emails(
     conn: sqlite3.Connection, *, limit: int = 500
 ) -> list[dict[str, Any]]:
     rows = conn.execute(
-        """
+        f"""
         SELECT * FROM emails
-        WHERE summary_detailed IS NULL OR TRIM(summary_detailed) = ''
+        WHERE {_unsummarized_sql_clause()}
         ORDER BY COALESCE(received_at, created_at) DESC
         LIMIT ?
         """,
@@ -261,10 +273,10 @@ def count_unsummarized_emails_since(
     conn: sqlite3.Connection, *, since_ts: float
 ) -> int:
     row = conn.execute(
-        """
+        f"""
         SELECT COUNT(*) FROM emails
         WHERE COALESCE(received_at, created_at) >= ?
-          AND (summary_detailed IS NULL OR TRIM(summary_detailed) = '')
+          AND {_unsummarized_sql_clause()}
         """,
         (since_ts,),
     ).fetchone()
@@ -284,7 +296,7 @@ def list_emails_for_summary_scan(
     """
     params: list[Any] = [since_ts]
     if pending_only:
-        query += " AND (summary_detailed IS NULL OR TRIM(summary_detailed) = '')"
+        query += f" AND {_unsummarized_sql_clause()}"
     query += " ORDER BY COALESCE(received_at, created_at) ASC"
     if limit is not None:
         query += " LIMIT ?"
@@ -294,6 +306,8 @@ def list_emails_for_summary_scan(
 
 
 SUMMARY_QUEUE_SKIP_MARKER = "[queue cleared]"
+DOWNVOTED_SENDER_SKIP_MARKER = "[downvoted sender]"
+SPAM_SKIP_MARKER = "[classified as spam]"
 
 
 def reset_summary_data_for_emails(

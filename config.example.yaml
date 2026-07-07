@@ -11,12 +11,31 @@ gmail:
   max_fetch: 20                # max unread messages per poll
 
 ollama:
-  base_url: http://127.0.0.1:11434
+  # ollama-gpu0 on host GPU 0 (:11435) — share qwen2.5:3b with frigate-tui / tri-tone-chat
+  base_url: http://127.0.0.1:11435
   model: qwen2.5:3b
-  spam_model: llama3.2:1b    # smaller model for spam checks only
-  spam_main_gpu: 0           # Ollama main_gpu for spam (omit or -1 for auto)
+  main_gpu: 0                # host GPU index; dedicated Ollama containers use device 0 only
   timeout: 120
   prompts_dir: prompts    # saved LLM system prompts (.txt)
+
+spam:
+  threshold: 5.0             # score at or above = spam (SpamAssassin default)
+  command: null              # optional path to spamassassin/spamc; auto-detect if omitted
+  use_spamd: false           # true = talk to spamd daemon via spamc (faster at volume)
+  spamd_host: 127.0.0.1
+  spamd_port: 783
+  timeout: 30
+
+self_heal:
+  enabled: true
+  interval_sec: 300          # background check interval
+  ollama_cooldown_sec: 600   # min gap between Ollama warm + pipeline kickstarts
+  tts_restart_cooldown_sec: 1800  # min gap between Chatterbox docker restarts
+  calendar_days: 30          # lookback when resuming stalled calendar workers
+
+calendar:
+  extract_concurrency: 6   # parallel Ollama calls during Check for Events (1–32)
+  ollama_main_gpu: 0       # calendar text LLM (inherits ollama.main_gpu if omitted)
 
 chatterbox_tts:
   enabled: true

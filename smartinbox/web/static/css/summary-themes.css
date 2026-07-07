@@ -52,6 +52,14 @@
   padding: 0.45rem 0.7rem;
 }
 
+.summary-view-option.btn-go-source:not(:disabled) {
+  color: var(--accent, #4a9eff);
+}
+
+.summary-view-option.btn-go-source:not(:disabled):hover {
+  background: var(--surface2);
+}
+
 .summary-theme-picker {
   display: flex;
   align-items: center;

@@ -510,7 +510,13 @@ def create_app(core: SmartInboxCore) -> FastAPI:
             result = await core.extract_calendar_for_email_id(email_id, force=force)
         except ValueError as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=404)
-        return JSONResponse({"ok": True, **result})
+        return JSONResponse(
+            {
+                "ok": True,
+                **result,
+                "logs": core.get_process_view().get("logs") or [],
+            }
+        )
 
     @app.get("/api/calendar/queue")
     async def api_calendar_queue(request: Request):
@@ -694,6 +700,25 @@ def create_app(core: SmartInboxCore) -> FastAPI:
             {
                 "ok": True,
                 **result,
+                "pipeline": view.get("pipeline") or {},
+                "logs": view.get("logs") or [],
+            }
+        )
+
+    @app.post("/api/self-heal")
+    async def api_self_heal(request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        reason = str(body.get("reason") or "manual").strip() or "manual"
+        result = await core.run_self_heal(reason=reason)
+        view = core.get_process_view()
+        return JSONResponse(
+            {
+                "ok": True,
+                **result,
+                "self_heal": core.get_self_heal_status(),
                 "pipeline": view.get("pipeline") or {},
                 "logs": view.get("logs") or [],
             }
@@ -1248,7 +1273,36 @@ def create_app(core: SmartInboxCore) -> FastAPI:
 
     @app.get("/api/llm")
     async def api_llm_get():
-        return JSONResponse(await core.get_llm_state())
+        try:
+            return JSONResponse(await core.get_llm_state())
+        except Exception as e:
+            return JSONResponse(
+                {
+                    "base_url": core.get_ollama_base_url(),
+                    "reachable": False,
+                    "error": str(e),
+                    "models": [],
+                    "selected_model": core.get_ollama_model(),
+                    "config_default_model": core.get_config_default_model(),
+                    "model_listed": False,
+                    "spam": {
+                        "available": False,
+                        "engine": "spamassassin",
+                        "error": str(e),
+                        "threshold": core.get_spam_threshold(),
+                        "config_default_threshold": core.get_config_default_spam_threshold(),
+                    },
+                    "system_prompt": core.get_summary_system_prompt(),
+                    "custom_system_prompt": core.get_custom_summary_system_prompt(),
+                    "default_system_prompt": core.get_default_summary_system_prompt(),
+                    "is_custom_prompt": core.get_custom_summary_system_prompt() is not None,
+                    "prompts_dir": str(core._prompts_dir),
+                    "saved_prompts": [],
+                    "active_prompt_file": core.get_summary_prompt_file(),
+                    "prompt_source": core.get_prompt_source(),
+                },
+                status_code=200,
+            )
 
     @app.post("/api/llm/model")
     async def api_llm_set_model(request: Request):
@@ -1272,26 +1326,14 @@ def create_app(core: SmartInboxCore) -> FastAPI:
             body = await request.json()
         except Exception:
             body = {}
-        model = str(body.get("model") or "").strip()
-        if not model:
-            return JSONResponse({"ok": False, "error": "model required"}, status_code=400)
-        try:
-            saved = core.set_spam_ollama_model(model)
-            gpu = core.get_spam_ollama_main_gpu()
-            if "main_gpu" in body:
-                gpu = core.set_spam_ollama_main_gpu(body.get("main_gpu"))
-            core.add_log(
-                f"Spam Ollama model set to {saved}"
-                + (f" (GPU {gpu})" if gpu is not None else " (auto GPU)"),
-                "info",
-            )
+        if "threshold" not in body:
             return JSONResponse(
-                {
-                    "ok": True,
-                    "model": saved,
-                    "spam_main_gpu": gpu,
-                }
+                {"ok": False, "error": "threshold required"}, status_code=400
             )
+        try:
+            saved = core.set_spam_threshold(body.get("threshold"))
+            core.add_log(f"SpamAssassin threshold set to {saved:.1f}", "info")
+            return JSONResponse({"ok": True, "threshold": saved})
         except ValueError as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
 
@@ -1469,7 +1511,13 @@ def create_app(core: SmartInboxCore) -> FastAPI:
             result = await core.extract_calendar_for_email_id(email_id, force=force)
         except ValueError as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=404)
-        return JSONResponse({"ok": True, **result})
+        return JSONResponse(
+            {
+                "ok": True,
+                **result,
+                "logs": core.get_process_view().get("logs") or [],
+            }
+        )
 
     @app.post("/api/summarize/{email_id}")
     async def api_summarize(email_id: str):

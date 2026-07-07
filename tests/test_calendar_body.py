@@ -7,9 +7,14 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from smartinbox.calendar_body import (
+    calendar_events_are_confident,
+    filter_confident_calendar_events,
+    is_reply_header_line,
     parse_body_calendar_events,
+    preprocess_email_calendar_events,
     parse_relative_calendar_events,
     parse_subject_calendar_events,
+    strip_reply_headers,
 )
 
 TZ = "America/Toronto"
@@ -108,6 +113,90 @@ def test_subject_date_requires_time():
     )
     assert len(events) == 1
     assert _hour_minute(events[0]["event_start"]) == (16, 30)
+
+
+def test_subject_invite_time_with_mdt_defaults_to_reference_day():
+    ref = datetime(2026, 7, 6, 11, 24, tzinfo=ZoneInfo("America/Toronto")).timestamp()
+    events = parse_subject_calendar_events(
+        "Invite from Dr. Laurie Davis h.c. – 9:00 am MDT Self-Work",
+        email_id="e10",
+        sender="laurie@example.com",
+        timezone=TZ,
+        reference_ts=ref,
+    )
+    assert len(events) == 1
+    dt = datetime.fromtimestamp(events[0]["event_start"], tz=ZoneInfo("America/Denver"))
+    assert (dt.year, dt.month, dt.day) == (2026, 7, 6)
+    assert (dt.hour, dt.minute) == (9, 0)
+
+
+def test_subject_time_without_invite_or_tz_is_skipped():
+    ref = datetime(2026, 7, 6, 11, 24, tzinfo=ZoneInfo(TZ)).timestamp()
+    events = parse_subject_calendar_events(
+        "Weekly newsletter — 9:00 am digest",
+        email_id="e11",
+        sender="news@example.com",
+        timezone=TZ,
+        reference_ts=ref,
+    )
+    assert events == []
+
+
+RAMIN_THREAD = """Great. I will email you the Zoom link.
+On Mon, Jul 6, 2026 at 2:12 PM <rmodiri@aol.com> wrote:
+
+Fantastic. Would 1:30 PM Central Time work for you?
+On Monday, July 6, 2026 at 12:58:44 PM CDT, Bill McEvoy <william.mcevoy@gmail.com> wrote:
+
+Tuesday works great, any time.
+On Mon, Jul 6, 2026 at 1:52 PM <rmodiri@aol.com> wrote:
+
+Happy Monday, Bill,
+I like to talk to you if you are available for a Zoom call on Tuesday or Wednesday.
+Many thanks."""
+
+
+def test_reply_header_lines_are_stripped():
+    assert is_reply_header_line(
+        "On Mon, Jul 6, 2026 at 2:12 PM <rmodiri@aol.com> wrote:"
+    )
+    stripped = strip_reply_headers(RAMIN_THREAD)
+    assert "wrote:" not in stripped
+
+
+def test_scheduling_thread_extracts_tuesday_at_central_time():
+    ref = datetime(2026, 7, 6, 14, 30, tzinfo=ZoneInfo(TZ)).timestamp()
+    events, source = preprocess_email_calendar_events(
+        body=RAMIN_THREAD,
+        subject="Re: Zoom call",
+        summary=None,
+        email_id="thread1",
+        sender="rmodiri@aol.com",
+        timezone=TZ,
+        reference_ts=ref,
+    )
+    assert source == "thread schedule"
+    assert len(events) == 1
+    dt = datetime.fromtimestamp(events[0]["event_start"], tz=ZoneInfo("America/Chicago"))
+    assert (dt.year, dt.month, dt.day) == (2026, 7, 7)
+    assert (dt.hour, dt.minute) == (13, 30)
+    assert calendar_events_are_confident(events)
+
+
+def test_reply_header_body_dates_are_filtered():
+    ref = datetime(2026, 7, 6, 14, 30, tzinfo=ZoneInfo(TZ)).timestamp()
+    body = (
+        "On Mon, Jul 6, 2026 at 2:12 PM <rmodiri@aol.com> wrote:\n\n"
+        "See you soon."
+    )
+    events = parse_body_calendar_events(
+        body,
+        email_id="hdr",
+        sender="a@example.com",
+        subject="Hi",
+        timezone=TZ,
+    )
+    assert filter_confident_calendar_events(events) == []
 
 
 def test_distant_nearby_time_is_not_attached():

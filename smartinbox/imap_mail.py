@@ -160,7 +160,7 @@ def decode_mime_header(value: str | None) -> str:
             parts.append(_decode_bytes(chunk, charset))
         else:
             parts.append(str(chunk))
-    return "".join(parts).strip()
+    return re.sub(r"[\r\n]+", " ", "".join(parts)).strip()
 
 
 def _strip_html(html_doc: str) -> str:
@@ -368,9 +368,11 @@ def parse_imap_message(
         except (TypeError, ValueError, OSError):
             received_at = 0.0
     uid_str = imap_uid.decode() if isinstance(imap_uid, bytes) else str(imap_uid)
+    rfc822_message_id = (msg.get("Message-ID") or "").strip() or None
     return {
         "id": message_id_for(msg, imap_uid, account_id),
         "imap_uid": uid_str,
+        "rfc822_message_id": rfc822_message_id,
         "account_id": account_id,
         "account_email": account_email,
         "provider": provider,

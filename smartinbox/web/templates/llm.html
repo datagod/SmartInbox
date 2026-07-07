@@ -51,22 +51,19 @@
     <section class="set-panel">
       <h2>Spam check</h2>
       <p class="set-hint">
-        Uses a separate small Ollama model before voice alerts. Summaries still use the model above.
-        GPU index is passed to Ollama as <code>main_gpu</code> (same as calendar extraction).
+        Uses <a href="https://spamassassin.apache.org/">SpamAssassin</a> (rules + scoring, no LLM)
+        to classify mail <em>before</em> summarizing. Downvoted senders skip the check.
+        Install <code>spamassassin</code> on the host running SmartInbox.
       </p>
       <p class="gmail-status" id="spam-model-status">Checking…</p>
       <div class="set-grid">
-        <label class="set-field" id="spam-model-picker" hidden>
-          <span>Spam model</span>
-          <select class="set-select" id="spam-model-select"></select>
-        </label>
         <label class="set-field">
-          <span>Ollama GPU</span>
-          <input type="number" class="set-input" id="spam-ollama-gpu" min="0" max="15" step="1" value="0" placeholder="auto">
+          <span>Score threshold</span>
+          <input type="number" class="set-input" id="spam-threshold" min="0" max="20" step="0.1" value="5">
         </label>
       </div>
-      <div class="actions-row" id="spam-model-actions" hidden>
-        <button type="button" class="btn btn-primary" id="btn-save-spam-model">Save spam settings</button>
+      <div class="actions-row" id="spam-model-actions">
+        <button type="button" class="btn btn-primary" id="btn-save-spam-model">Save spam threshold</button>
       </div>
     </section>
 
@@ -110,6 +107,6 @@
     </section>
   </div>
   <script src="/static/js/alerts.js?v=1"></script>
-  <script src="/static/js/llm.js?v=3"></script>
+  <script src="/static/js/llm.js?v=4"></script>
 </body>
 </html>

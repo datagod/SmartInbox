@@ -2,143 +2,220 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
+import shutil
+from email.message import EmailMessage
+from email.utils import formatdate
 from typing import Any
 
-import httpx
+DEFAULT_SPAM_THRESHOLD = 5.0
+DEFAULT_SPAM_TIMEOUT = 30.0
+DEFAULT_SPAMD_HOST = "127.0.0.1"
+DEFAULT_SPAMD_PORT = 783
 
-DEFAULT_SPAM_MODEL = "llama3.2:1b"
-
-
-DEFAULT_SPAM_SYSTEM = """You classify incoming email for a personal inbox.
-Decide if the message looks like spam, phishing, scam, or unwanted bulk marketing.
-
-Reply with exactly one token on the first line:
-NOT_SPAM — personal mail, receipts, appointments, work, newsletters the user likely wants
-SPAM — scams, phishing, fake invoices, SEO pitches, crypto/Nigerian prince, obvious junk
-
-Optional second line: one short reason (max 12 words)."""
-
-
-def default_spam_system_prompt() -> str:
-    return DEFAULT_SPAM_SYSTEM
-
-
-def build_spam_ollama_options(*, main_gpu: int | None = None) -> dict[str, Any]:
-    """Ollama runtime options for spam checks — tiny output, fast turnaround.
-
-    Spam runs on CPU (num_gpu=0) so a large summary model can stay resident in GPU
-    VRAM without llama-server crashing on dual load.
-    """
-    opts: dict[str, Any] = {
-        "num_predict": 48,
-        "temperature": 0,
-        "num_gpu": 0,
-    }
-    if main_gpu is not None and main_gpu >= 0:
-        opts["num_gpu"] = -1
-        opts["main_gpu"] = int(main_gpu)
-    return opts
+_SPAMC_RESULT_RE = re.compile(
+    r"Spam:\s*(?P<flag>True|False|Yes|No)\s*;\s*(?P<score>[-\d.]+)\s*/\s*(?P<threshold>[-\d.]+)",
+    re.IGNORECASE,
+)
+_SPAMC_SCORE_RE = re.compile(
+    r"(?P<score>[-\d.]+)\s*/\s*(?P<threshold>[-\d.]+)\s*$",
+    re.MULTILINE,
+)
+_SPAM_STATUS_RE = re.compile(
+    r"X-Spam-Status:\s*(?P<flag>Yes|No)\b.*?score=(?P<score>[-\d.]+).*?required=(?P<threshold>[-\d.]+)",
+    re.IGNORECASE,
+)
+_POINTS_RE = re.compile(
+    r"Content analysis details:\s*\((?P<score>[-\d.]+)\s+points,\s*(?P<threshold>[-\d.]+)\s+required\)",
+    re.IGNORECASE,
+)
+_HEADER_NEWLINES_RE = re.compile(r"[\r\n]+")
 
 
-def build_spam_prompt(
+def sanitize_rfc822_header(value: str | None) -> str:
+    """RFC822 header values must not contain line breaks (Python EmailMessage enforces this)."""
+    return _HEADER_NEWLINES_RE.sub(" ", (value or "").strip())
+
+
+def build_rfc822_message(*, sender: str, subject: str, body: str) -> bytes:
+    """Build a minimal RFC822 message for SpamAssassin."""
+    msg = EmailMessage()
+    msg["From"] = sanitize_rfc822_header(sender) or "unknown@localhost"
+    msg["Subject"] = sanitize_rfc822_header(subject) or "(no subject)"
+    msg["Date"] = formatdate(localtime=True)
+    msg["Message-ID"] = f"<smartinbox-{abs(hash((sender, subject, body[:200])))}@localhost>"
+    msg.set_content((body or "").strip() or "(empty)")
+    return msg.as_bytes()
+
+
+def parse_spamassassin_output(
+    text: str, *, threshold: float
+) -> tuple[bool | None, float | None, float | None]:
+    """Return (is_spam, score, required_threshold)."""
+    blob = text or ""
+    for pattern in (_SPAMC_RESULT_RE, _SPAMC_SCORE_RE, _SPAM_STATUS_RE, _POINTS_RE):
+        match = pattern.search(blob)
+        if not match:
+            continue
+        score = float(match.group("score"))
+        required_raw = match.groupdict().get("threshold")
+        required = float(required_raw) if required_raw is not None else threshold
+        flag = (match.groupdict().get("flag") or "").strip().lower()
+        if flag in {"true", "yes"}:
+            return True, score, required
+        if flag in {"false", "no"}:
+            return False, score, required
+        return score >= required, score, required
+    return None, None, None
+
+
+def resolve_spam_command(
     *,
-    sender: str,
-    subject: str,
-    body: str,
-    summary: str | None = None,
-) -> str:
-    summary_trim = (summary or "").strip()[:1200]
-    parts = [
-        f"From: {sender or '(unknown)'}",
-        f"Subject: {subject or '(no subject)'}",
-    ]
-    if summary_trim:
-        parts.append(f"Summary:\n{summary_trim}")
-        snippet = (body or "").strip()[:800]
-        if snippet:
-            parts.append(f"Opening snippet:\n{snippet}")
-    else:
-        parts.append(f"Body:\n{(body or '')[:3500] or '(empty)'}")
-    return "\n\n".join(parts)
-
-
-def parse_spam_verdict(content: str) -> bool | None:
-    """Return True if spam, False if not, None if unclear."""
-    text = (content or "").strip()
-    if not text:
+    command: str | None = None,
+    use_spamd: bool = False,
+    spamd_host: str = DEFAULT_SPAMD_HOST,
+    spamd_port: int = DEFAULT_SPAMD_PORT,
+) -> list[str] | None:
+    """Resolve argv for a spam check subprocess."""
+    if use_spamd:
+        spamc = command or shutil.which("spamc")
+        if not spamc:
+            return None
+        return [
+            spamc,
+            "-d",
+            spamd_host,
+            "-p",
+            str(int(spamd_port)),
+            "-c",
+        ]
+    spamassassin = command or shutil.which("spamassassin")
+    if not spamassassin:
         return None
-    first = text.splitlines()[0].strip().upper()
-    first = re.sub(r"[^A-Z_ ]+", " ", first)
-    first = re.sub(r"\s+", " ", first).strip()
-    if "NOT SPAM" in first or first.startswith("NOT_SPAM"):
-        return False
-    if first.startswith("SPAM") or first == "SPAM" or " SPAM" in f" {first} ":
-        return True
-    if first in {"YES", "JUNK", "PHISHING", "SCAM"}:
-        return True
-    if first in {"NO", "LEGIT", "LEGITIMATE", "OK", "CLEAN"}:
-        return False
-    upper = text.upper()
-    if "NOT_SPAM" in upper or "NOT SPAM" in upper:
-        return False
-    if re.search(r"\bSPAM\b", upper):
-        return True
-    return None
+    return [spamassassin, "-t"]
+
+
+async def probe_spamassassin(
+    *,
+    command: str | None = None,
+    use_spamd: bool = False,
+    spamd_host: str = DEFAULT_SPAMD_HOST,
+    spamd_port: int = DEFAULT_SPAMD_PORT,
+    timeout: float = 8.0,
+) -> dict[str, Any]:
+    """Check whether SpamAssassin tooling is available."""
+    argv = resolve_spam_command(
+        command=command,
+        use_spamd=use_spamd,
+        spamd_host=spamd_host,
+        spamd_port=spamd_port,
+    )
+    if not argv:
+        return {
+            "available": False,
+            "engine": "spamassassin",
+            "use_spamd": use_spamd,
+            "command": None,
+            "version": None,
+            "error": "spamassassin or spamc not found on PATH",
+        }
+
+    version_argv = [argv[0], "--version"]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *version_argv,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except (asyncio.TimeoutError, FileNotFoundError, OSError) as exc:
+        return {
+            "available": False,
+            "engine": "spamassassin",
+            "use_spamd": use_spamd,
+            "command": argv[0],
+            "version": None,
+            "error": str(exc),
+        }
+
+    version_text = (stdout or stderr or b"").decode("utf-8", errors="replace").strip()
+    version = version_text.splitlines()[0] if version_text else None
+    if proc.returncode not in (0, 1):
+        return {
+            "available": False,
+            "engine": "spamassassin",
+            "use_spamd": use_spamd,
+            "command": argv[0],
+            "version": version,
+            "error": version_text or f"exit code {proc.returncode}",
+        }
+    return {
+        "available": True,
+        "engine": "spamassassin",
+        "use_spamd": use_spamd,
+        "command": argv[0],
+        "version": version,
+        "error": None,
+    }
 
 
 async def classify_email_spam(
     *,
-    base_url: str,
-    model: str,
     sender: str,
     subject: str,
     body: str,
-    summary: str | None = None,
-    system_prompt: str | None = None,
-    ollama_options: dict[str, Any] | None = None,
-    timeout: float = 60.0,
-    keep_alive: str | int = -1,
-) -> tuple[bool | None, str | None]:
-    """Ask Ollama if email looks spammy. Returns (is_spam, error)."""
-    url = f"{base_url.rstrip('/')}/api/chat"
-    system = (system_prompt or "").strip() or DEFAULT_SPAM_SYSTEM
-    payload: dict[str, Any] = {
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system},
-            {
-                "role": "user",
-                "content": build_spam_prompt(
-                    sender=sender,
-                    subject=subject,
-                    body=body,
-                    summary=summary,
-                ),
-            },
-        ],
-        "stream": False,
-        "keep_alive": keep_alive,
-        "options": ollama_options or build_spam_ollama_options(),
-    }
-    try:
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(url, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-    except httpx.TimeoutException:
-        return None, f"Ollama spam check timed out after {timeout:.0f}s"
-    except httpx.HTTPStatusError as e:
-        return None, f"Ollama HTTP {e.response.status_code}: {e.response.text[:300]}"
-    except httpx.RequestError as e:
-        return None, f"Ollama request error: {e}"
+    threshold: float = DEFAULT_SPAM_THRESHOLD,
+    command: str | None = None,
+    use_spamd: bool = False,
+    spamd_host: str = DEFAULT_SPAMD_HOST,
+    spamd_port: int = DEFAULT_SPAMD_PORT,
+    timeout: float = DEFAULT_SPAM_TIMEOUT,
+) -> tuple[bool | None, str | None, float | None]:
+    """Score email with SpamAssassin. Returns (is_spam, error, score)."""
+    argv = resolve_spam_command(
+        command=command,
+        use_spamd=use_spamd,
+        spamd_host=spamd_host,
+        spamd_port=spamd_port,
+    )
+    if not argv:
+        return (
+            None,
+            "SpamAssassin not found — install spamassassin or set spam.command in config.yaml",
+            None,
+        )
 
-    if isinstance(data, dict) and data.get("error"):
-        return None, str(data["error"])
-    content = (data.get("message") or {}).get("content")
-    if not content or not str(content).strip():
-        return None, "Ollama returned empty spam verdict"
-    verdict = parse_spam_verdict(str(content))
+    payload = build_rfc822_message(sender=sender, subject=subject, body=body)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(payload),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        return None, f"SpamAssassin timed out after {timeout:.0f}s", None
+    except (FileNotFoundError, OSError) as exc:
+        return None, f"SpamAssassin failed to start: {exc}", None
+
+    output = b"".join(part for part in (stdout, stderr) if part).decode(
+        "utf-8", errors="replace"
+    )
+    if proc.returncode not in (0, 1):
+        detail = (output or "").strip()[:300]
+        return (
+            None,
+            detail or f"SpamAssassin exited with code {proc.returncode}",
+            None,
+        )
+
+    verdict, score, required = parse_spamassassin_output(output, threshold=threshold)
     if verdict is None:
-        return None, f"Could not parse spam verdict: {str(content).strip()[:120]}"
-    return verdict, None
+        detail = (output or "").strip()[:300]
+        return None, detail or "Could not parse SpamAssassin score", None
+    return verdict, None, score

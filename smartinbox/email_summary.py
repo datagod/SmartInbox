@@ -6,6 +6,8 @@ from typing import Any
 
 import httpx
 
+from smartinbox.ollama_options import build_ollama_gpu_options
+
 DEFAULT_SYSTEM = """You summarize incoming email for a busy homeowner.
 Be thorough and factual. Use only information from the email — do not invent details.
 Return markdown with exactly these sections (use ## headings):
@@ -24,10 +26,7 @@ Do not add other top-level sections. Do not repeat these instructions in the out
 
 def build_summary_ollama_options(*, main_gpu: int | None = None) -> dict[str, Any]:
     """Ollama runtime options for email summaries (see Ollama API `options`)."""
-    opts: dict[str, Any] = {"num_predict": 2048, "num_gpu": -1}
-    if main_gpu is not None:
-        opts["main_gpu"] = int(main_gpu)
-    return opts
+    return build_ollama_gpu_options(main_gpu=main_gpu, num_predict=2048)
 
 
 def default_system_prompt() -> str:

@@ -6,7 +6,7 @@
   <title>SmartInbox</title>
   <link rel="icon" href="/static/img/smartinbox-icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/css/styles.css?v=24">
-  <link rel="stylesheet" href="/static/css/summary-themes.css?v=33">
+  <link rel="stylesheet" href="/static/css/summary-themes.css?v=34">
 </head>
 <body>
   <div class="app">
@@ -59,6 +59,7 @@
           <div class="summary-view-switcher" role="group" aria-label="Summary view">
             <button type="button" class="summary-view-option is-active" data-view="summary" aria-pressed="true" disabled>Summary</button>
             <button type="button" class="summary-view-option" data-view="original" aria-pressed="false" disabled>Original</button>
+            <button type="button" class="summary-view-option btn-go-source" disabled>Go to source</button>
           </div>
           <label class="summary-theme-picker">
             <span>Theme</span>
@@ -481,6 +482,7 @@
           <div class="summary-view-switcher summary-view-switcher--actions" role="group" aria-label="Summary view">
             <button type="button" class="summary-view-option is-active" data-view="summary" aria-pressed="true" disabled>Summary</button>
             <button type="button" class="summary-view-option" data-view="original" aria-pressed="false" disabled>Original</button>
+            <button type="button" class="summary-view-option btn-go-source" disabled>Go to source</button>
           </div>
           <button type="button" class="btn btn-secondary" id="btn-resummarize" disabled>Re-summarize</button>
         </div>
@@ -497,6 +499,6 @@
   </div>
   <script src="/static/js/alerts.js?v=1"></script>
   <script src="/static/js/markdown.js?v=2"></script>
-  <script src="/static/js/app.js?v=53"></script>
+  <script src="/static/js/app.js?v=55"></script>
 </body>
 </html>

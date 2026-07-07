@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import time
 from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -52,9 +53,30 @@ _NATURAL_DATE_RE = re.compile(
 )
 _CALENDAR_HINT_RE = re.compile(
     r"(?i)add (?:this )?date to your calendar|put (?:this )?on your calendar|"
-    r"join us on|join zoom|zoom meeting|webinar|calendar invitation|"
+    r"join us on|join zoom|zoom meeting|zoom call|webinar|calendar invitation|"
     r"invitation:\s|meeting invite|teams meeting|google meet|"
     r"scheduled for|appointment|reservation confirm|delivery date|pickup time"
+)
+_REPLY_HEADER_LINE_RE = re.compile(
+    r"(?im)^\s*on\s+.+?\bwrote\s*:\s*$"
+)
+_SCHEDULING_CONTEXT_RE = re.compile(
+    r"(?i)\b(?:zoom|phone\s+call|call|meeting|talk|conversation|available|"
+    r"work(?:s)?\s+for\s+you|adding to my calendar)\b"
+)
+_THREAD_TIME_TZ_RE = re.compile(
+    r"(?i)"
+    r"(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*"
+    r"(?:"
+    r"(central|eastern|pacific|mountain|atlantic)\s*(?:time|standard|daylight)?"
+    r"|(?-i:CDT|CST|EDT|EST|MDT|MST|PDT|PST|ADT|AST)"
+    r")"
+)
+_WEEKDAY_AGREE_RE = re.compile(
+    r"(?i)\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+works\b"
+)
+_WEEKDAY_NAME_RE = re.compile(
+    r"(?i)\b(?:on\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b"
 )
 _DATE_SIGNAL_RE = re.compile(
     r"(?i)"
@@ -102,6 +124,36 @@ _SUBJECT_DATE_RE = re.compile(
     r"(?:\w+day,?\s+)?(\w+)\s+(\d{1,2}),?\s+(\d{4})"
     r"(?:\s+@?\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm))?"
 )
+_SUBJECT_TIME_RE = re.compile(
+    r"(?i)"
+    r"\b(\d{1,2}):(\d{2})\s*(am|pm)\b"
+    r"(?:\s*(?:"
+    r"((?-i:MDT|MST|PDT|PST|CDT|CST|EDT|EST|ADT|AST|UTC|GMT))"
+    r"|(mountain|pacific|central|eastern|atlantic)"
+    r"(?:\s+(?:time|standard|daylight))?)"
+    r")?"
+)
+_SUBJECT_INVITE_HINT_RE = re.compile(
+    r"(?i)\binvite\b|\binvitation\b|\bmeeting\b|\bappointment\b|\bcalendar\b"
+)
+_TZ_ABBREVS = {
+    "mdt": "America/Denver",
+    "mst": "America/Denver",
+    "mt": "America/Denver",
+    "pdt": "America/Los_Angeles",
+    "pst": "America/Los_Angeles",
+    "pt": "America/Los_Angeles",
+    "cdt": "America/Chicago",
+    "cst": "America/Chicago",
+    "ct": "America/Chicago",
+    "edt": "America/New_York",
+    "est": "America/New_York",
+    "et": "America/New_York",
+    "adt": "America/Halifax",
+    "ast": "America/Halifax",
+    "utc": "UTC",
+    "gmt": "UTC",
+}
 _TOMORROW_AT_RE = re.compile(
     r"(?i)\btomorrow\b(?:\s+at\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?)?"
 )
@@ -280,10 +332,53 @@ def _parse_month_name(token: str) -> int | None:
     return _MONTH_NAMES.get(str(token or "").strip().lower())
 
 
+def is_reply_header_line(line: str) -> bool:
+    """True for Gmail/Outlook quoted-reply header lines."""
+    return bool(_REPLY_HEADER_LINE_RE.match(str(line or "").strip()))
+
+
+def is_reply_header_source(source_text: str | None) -> bool:
+    """True when extracted text is a sent-on reply header, not a meeting time."""
+    text = str(source_text or "").strip()
+    if not text or not re.search(r"(?i)\bwrote\s*:", text):
+        return False
+    if re.search(r"(?i)^on\s+", text):
+        return True
+    if re.search(r"<[^>]+@[^>]+>", text):
+        return True
+    if re.search(r"\d{4}", text) and re.search(r"(?i)\bat\s+\d{1,2}", text):
+        return True
+    return False
+
+
+def strip_reply_headers(body: str) -> str:
+    """Remove quoted email 'On … wrote:' lines before date extraction."""
+    lines = str(body or "").splitlines()
+    kept = [line for line in lines if not is_reply_header_line(line)]
+    return "\n".join(kept).strip()
+
+
+def filter_confident_calendar_events(
+    events: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Drop events whose source text is a reply header timestamp."""
+    return [
+        event
+        for event in events
+        if not is_reply_header_source(str(event.get("source_text") or ""))
+    ]
+
+
+def calendar_events_are_confident(events: list[dict[str, Any]]) -> bool:
+    return bool(filter_confident_calendar_events(events))
+
+
 def _resolve_tz_name(phrase: str | None, default: str) -> str:
     text = str(phrase or "").strip().lower()
     if not text:
         return default
+    if text in _TZ_ABBREVS:
+        return _TZ_ABBREVS[text]
     if "pacific" in text:
         return "America/Los_Angeles"
     if "mountain" in text:
@@ -473,6 +568,8 @@ def parse_body_calendar_events(
     seen: set[str] = set()
 
     for source_text, match in _iter_body_date_matches(text):
+        if is_reply_header_source(source_text):
+            continue
         start_ts = _timestamp_from_match(match, timezone, text=text)
         if start_ts is None:
             continue
@@ -516,6 +613,130 @@ def parse_body_calendar_events(
             }
         )
     return results
+
+
+def _date_for_weekday(ref: datetime, weekday: int) -> datetime:
+    days_ahead = (weekday - ref.weekday()) % 7
+    target = ref + timedelta(days=days_ahead)
+    return target.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _find_thread_proposed_time(
+    text: str,
+) -> tuple[int, int, str, str] | None:
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or is_reply_header_line(stripped):
+            continue
+        if is_reply_header_source(stripped):
+            continue
+        match = _THREAD_TIME_TZ_RE.search(stripped)
+        if not match:
+            continue
+        parsed = _groups_to_time(match.group(1), match.group(2), match.group(3))
+        if parsed is None:
+            continue
+        hour, minute = parsed
+        tz_phrase = match.group(4) or match.group(5)
+        event_tz = _resolve_tz_name(tz_phrase, "UTC")
+        return hour, minute, event_tz, match.group(0).strip()
+    return None
+
+
+def _find_thread_weekday(
+    text: str, *, reference_ts: float, timezone: str
+) -> int | None:
+    ref = _reference_dt(reference_ts, timezone)
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or is_reply_header_line(stripped):
+            continue
+        agree = _WEEKDAY_AGREE_RE.search(stripped)
+        if agree:
+            weekday = _WEEKDAY_NAMES.get(str(agree.group(1) or "").lower())
+            if weekday is not None:
+                return weekday
+
+    candidates: list[int] = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or is_reply_header_line(stripped):
+            continue
+        if not _SCHEDULING_CONTEXT_RE.search(stripped):
+            continue
+        for match in _WEEKDAY_NAME_RE.finditer(stripped):
+            weekday = _WEEKDAY_NAMES.get(str(match.group(1) or "").lower())
+            if weekday is not None and weekday not in candidates:
+                candidates.append(weekday)
+    if not candidates:
+        return None
+    ref_weekday = ref.weekday()
+    future = [weekday for weekday in candidates if weekday >= ref_weekday]
+    if future:
+        return min(future)
+    return min(candidates)
+
+
+def parse_thread_scheduling_events(
+    body: str,
+    *,
+    email_id: str,
+    sender: str,
+    subject: str,
+    timezone: str,
+    reference_ts: float,
+) -> list[dict[str, Any]]:
+    """Resolve scheduling threads: weekday agreement + proposed time with timezone."""
+    text = strip_reply_headers(str(body or ""))
+    if not text or not _SCHEDULING_CONTEXT_RE.search(text):
+        return []
+
+    time_info = _find_thread_proposed_time(text)
+    if time_info is None:
+        return []
+    hour, minute, event_tz, time_source = time_info
+
+    ref = _reference_dt(reference_ts, timezone)
+    weekday = _find_thread_weekday(text, reference_ts=reference_ts, timezone=timezone)
+    if weekday is not None:
+        day = _date_for_weekday(ref, weekday)
+        weekday_name = [
+            name
+            for name, index in _WEEKDAY_NAMES.items()
+            if index == weekday and len(name) > 3
+        ]
+        day_note = weekday_name[0].title() if weekday_name else "weekday"
+        source_text = f"{day_note} — {time_source}"
+    else:
+        day = ref.replace(hour=0, minute=0, second=0, microsecond=0)
+        source_text = time_source
+
+    start_ts = _to_timestamp(
+        year=day.year,
+        month=day.month,
+        day=day.day,
+        hour=hour,
+        minute=minute,
+        second=0,
+        ampm=None,
+        timezone=event_tz,
+    )
+    if start_ts is None:
+        return []
+
+    location = _extract_location(text)
+    title = _event_title(subject, location)
+    return [
+        _subject_event_from_timestamp(
+            email_id=email_id,
+            sender=sender,
+            subject=subject,
+            title=title,
+            location=location,
+            start_ts=start_ts,
+            source_text=source_text,
+        )
+    ]
 
 
 def parse_summary_calendar_events(
@@ -763,57 +984,119 @@ def parse_relative_calendar_events(
     return results
 
 
+def _subject_event_from_timestamp(
+    *,
+    email_id: str,
+    sender: str,
+    subject: str,
+    title: str,
+    location: str | None,
+    start_ts: float,
+    source_text: str,
+) -> dict[str, Any]:
+    return {
+        "id": make_event_id(email_id, title, start_ts),
+        "email_id": email_id,
+        "title": title,
+        "description": None,
+        "location": location,
+        "event_start": start_ts,
+        "event_end": None,
+        "source_text": source_text[:500],
+        "sender": sender,
+        "subject": subject,
+    }
+
+
 def parse_subject_calendar_events(
     subject: str,
     *,
     email_id: str,
     sender: str,
     timezone: str,
+    reference_ts: float | None = None,
 ) -> list[dict[str, Any]]:
     """Find dates embedded in the email subject line."""
     text = str(subject or "").strip()
     if not text or text.lower() == "(no subject)":
         return []
-    match = _SUBJECT_DATE_RE.search(text)
-    if not match:
-        return []
-    month = _parse_month_name(match.group(1))
-    if month is None:
-        return []
-    day = int(match.group(2))
-    year = int(match.group(3))
-    time_parts = _time_from_groups(match.group(4), match.group(5), match.group(6))
-    if time_parts is None:
-        return []
-    hour, minute = time_parts
-    start_ts = _to_timestamp(
-        year=year,
-        month=month,
-        day=day,
-        hour=hour,
-        minute=minute,
-        second=0,
-        ampm=None,
-        timezone=timezone,
-    )
-    if start_ts is None:
-        return []
     location = _extract_location(text)
     title = _event_title(text, location)
-    return [
-        {
-            "id": make_event_id(email_id, title, start_ts),
-            "email_id": email_id,
-            "title": title,
-            "description": None,
-            "location": location,
-            "event_start": start_ts,
-            "event_end": None,
-            "source_text": match.group(0).strip()[:500],
-            "sender": sender,
-            "subject": text,
-        }
-    ]
+
+    match = _SUBJECT_DATE_RE.search(text)
+    if match:
+        month = _parse_month_name(match.group(1))
+        if month is not None:
+            day = int(match.group(2))
+            year = int(match.group(3))
+            time_parts = _time_from_groups(
+                match.group(4), match.group(5), match.group(6)
+            )
+            if time_parts is not None:
+                hour, minute = time_parts
+                start_ts = _to_timestamp(
+                    year=year,
+                    month=month,
+                    day=day,
+                    hour=hour,
+                    minute=minute,
+                    second=0,
+                    ampm=None,
+                    timezone=timezone,
+                )
+                if start_ts is not None:
+                    return [
+                        _subject_event_from_timestamp(
+                            email_id=email_id,
+                            sender=sender,
+                            subject=text,
+                            title=title,
+                            location=location,
+                            start_ts=start_ts,
+                            source_text=match.group(0).strip(),
+                        )
+                    ]
+
+    ref_ts = float(reference_ts if reference_ts is not None else time.time())
+    invite_hint = bool(_SUBJECT_INVITE_HINT_RE.search(text))
+    for time_match in _SUBJECT_TIME_RE.finditer(text):
+        tz_phrase = time_match.group(4) or time_match.group(5)
+        if not tz_phrase and not invite_hint:
+            continue
+        time_parts = _time_from_groups(
+            time_match.group(1), time_match.group(2), time_match.group(3)
+        )
+        if time_parts is None:
+            continue
+        hour, minute = time_parts
+        event_tz = _resolve_tz_name(tz_phrase, timezone)
+        ref = _reference_dt(ref_ts, event_tz)
+        day = ref.replace(hour=0, minute=0, second=0, microsecond=0)
+        start_ts = _to_timestamp(
+            year=day.year,
+            month=day.month,
+            day=day.day,
+            hour=hour,
+            minute=minute,
+            second=0,
+            ampm=None,
+            timezone=event_tz,
+        )
+        if start_ts is None:
+            continue
+        return [
+            _subject_event_from_timestamp(
+                email_id=email_id,
+                sender=sender,
+                subject=text,
+                title=title,
+                location=location,
+                start_ts=start_ts,
+                source_text=time_match.group(0).strip(),
+            )
+        ]
+
+    return []
 
 
 def email_has_calendar_date_signals(
@@ -849,14 +1132,14 @@ def build_calendar_llm_context(
     if summary_text:
         parts.append(f"Summary:\n{summary_text[:2500]}")
     relevant: list[str] = []
-    for line in str(body or "").splitlines():
+    for line in strip_reply_headers(str(body or "")).splitlines():
         stripped = line.strip()
         if stripped and _line_has_date_signal(stripped):
             relevant.append(stripped)
     if relevant:
         parts.append("Date-related lines from body:\n" + "\n".join(relevant[:50]))
     else:
-        excerpt = str(body or "").strip()[:4000]
+        excerpt = strip_reply_headers(str(body or ""))[:4000]
         if excerpt:
             parts.append(f"Body excerpt:\n{excerpt}")
     return "\n\n".join(parts)[:10000]
@@ -890,9 +1173,10 @@ def preprocess_email_calendar_events(
     """
     candidates: list[dict[str, Any]] = []
     sources: list[str] = []
+    body_stripped = strip_reply_headers(body)
 
     body_events = parse_body_calendar_events(
-        body,
+        body_stripped,
         email_id=email_id,
         sender=sender,
         subject=subject,
@@ -907,12 +1191,34 @@ def preprocess_email_calendar_events(
         email_id=email_id,
         sender=sender,
         timezone=timezone,
+        reference_ts=reference_ts,
     )
     if subject_events:
         candidates.extend(subject_events)
         sources.append("subject date")
 
     relative_events = parse_relative_calendar_events(
+        body_stripped,
+        email_id=email_id,
+        sender=sender,
+        subject=subject,
+        timezone=timezone,
+        reference_ts=reference_ts,
+    )
+    if not relative_events and str(subject or "").strip():
+        relative_events = parse_relative_calendar_events(
+            subject,
+            email_id=email_id,
+            sender=sender,
+            subject=subject,
+            timezone=timezone,
+            reference_ts=reference_ts,
+        )
+    if relative_events:
+        candidates.extend(relative_events)
+        sources.append("relative date")
+
+    thread_events = parse_thread_scheduling_events(
         body,
         email_id=email_id,
         sender=sender,
@@ -920,9 +1226,9 @@ def preprocess_email_calendar_events(
         timezone=timezone,
         reference_ts=reference_ts,
     )
-    if relative_events:
-        candidates.extend(relative_events)
-        sources.append("relative date")
+    if thread_events:
+        candidates.extend(thread_events)
+        sources.append("thread schedule")
 
     summary_text = str(summary or "").strip()
     if summary_text:
@@ -937,7 +1243,7 @@ def preprocess_email_calendar_events(
             candidates.extend(summary_events)
             sources.append("summary date")
 
-    events = _merge_events(candidates)
+    events = filter_confident_calendar_events(_merge_events(candidates))
     if not events:
         return [], None
     return events, sources[0] if len(sources) == 1 else "preprocess"
@@ -950,7 +1256,8 @@ def should_call_calendar_llm(
     *,
     events_found: bool,
 ) -> bool:
-    """Only use Ollama when rule-based parsing found signals but no events."""
+    """Only use Ollama when date signals remain after rules + datefinder."""
     if events_found:
         return False
-    return email_has_calendar_date_signals(body, subject, summary)
+    stripped = strip_reply_headers(body)
+    return email_has_calendar_date_signals(stripped, subject, summary)

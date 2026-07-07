@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import re
+from typing import Any
 
 import httpx
 
+from smartinbox.email_summary import build_summary_ollama_options
 from smartinbox.important_senders import sanitize_text_for_tts
 
 DEFAULT_VOICE_STYLE_PROMPT = (
@@ -64,19 +66,21 @@ async def style_summary_for_voice(
     summary: str,
     system_prompt: str | None = None,
     timeout: float = 120.0,
+    ollama_options: dict[str, Any] | None = None,
 ) -> tuple[str | None, str | None]:
     """Rewrite a brief summary for TTS using the voice prompt."""
     brief = brief_summary_for_tts(summary)
     if not brief:
         return None, "empty summary"
     url = f"{base_url.rstrip('/')}/api/chat"
-    payload = {
+    payload: dict[str, Any] = {
         "model": model,
         "messages": [
             {"role": "system", "content": resolve_voice_style_prompt(system_prompt)},
             {"role": "user", "content": brief},
         ],
         "stream": False,
+        "options": ollama_options or build_summary_ollama_options(),
     }
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:

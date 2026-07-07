@@ -9,6 +9,8 @@ from typing import Any
 
 import httpx
 
+from smartinbox.ollama_options import build_ollama_gpu_options
+
 DEFAULT_SYSTEM = """You extract calendar events mentioned in email.
 Return ONLY valid JSON with this shape (no markdown, no commentary):
 {"events":[{"title":"short title","start":"ISO-8601 datetime","end":null or ISO-8601,"location":"optional","source_text":"quote from email"}]}
@@ -154,10 +156,7 @@ def parse_extracted_events(
 
 def build_calendar_ollama_options(*, main_gpu: int | None = None) -> dict[str, Any]:
     """Ollama runtime options for calendar extraction (see Ollama API `options`)."""
-    opts: dict[str, Any] = {"num_gpu": -1}
-    if main_gpu is not None:
-        opts["main_gpu"] = int(main_gpu)
-    return opts
+    return build_ollama_gpu_options(main_gpu=main_gpu)
 
 
 async def list_loaded_ollama_models(
@@ -203,8 +202,7 @@ async def preload_ollama_model(
         "stream": False,
         "keep_alive": keep_alive,
     }
-    if options:
-        payload["options"] = options
+    payload["options"] = options or build_calendar_ollama_options()
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(url, json=payload)
@@ -264,9 +262,8 @@ async def extract_calendar_events(
         ],
         "stream": False,
         "keep_alive": keep_alive,
+        "options": ollama_options or build_calendar_ollama_options(),
     }
-    if ollama_options:
-        payload["options"] = ollama_options
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(url, json=payload)

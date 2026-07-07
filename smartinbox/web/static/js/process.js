@@ -428,7 +428,7 @@
     const timings = pipeline?.llm_timings || {};
     const cards = [
       { key: 'summary', label: 'Summary', model: ollama.model, slow: 45 },
-      { key: 'spam', label: 'Spam check', model: ollama.spam_model, slow: 20 },
+      { key: 'spam', label: 'Spam check', model: (pipeline?.spam || {}).engine || 'SpamAssassin', slow: 5 },
       { key: 'calendar', label: 'Calendar LLM', model: ollama.model, slow: 60 },
     ];
 
@@ -1152,8 +1152,8 @@
         escapeHtml(String(ollama.calendar_concurrency || '—'))
       ),
       dlItem(
-        'Spam GPU',
-        escapeHtml(formatGpu(ollama.spam_gpu))
+        'Spam threshold',
+        escapeHtml(String((pipeline?.spam || {}).threshold ?? '—'))
       ),
       dlItem(
         'Calendar GPU',

@@ -93,6 +93,9 @@
               stalled workers, mail polling, and Ollama health.
               <strong>Restart Chatterbox</strong> restarts the TTS Docker container and re-runs
               investigate — use when synthesis fails with CUDA or HTTP 500 errors.
+              A background <strong>self-heal</strong> loop (every 5 minutes) automatically
+              kickstarts stalled pipelines, warms Ollama after LLM timeouts, and restarts
+              Chatterbox when TTS fails.
             </p>
           </div>
           <p class="calendar-status" id="process-kickstart-status"></p>

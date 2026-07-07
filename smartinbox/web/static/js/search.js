@@ -439,11 +439,23 @@
 
   async function addToCalendar(emailId, statusEl) {
     if (!emailId || busyEmailId) return;
+    const email = (currentPayload()?.results || []).find((row) => row.id === emailId);
+    const subject = email?.subject || '(no subject)';
+    const rescan = !!(email?.calendar_extracted || (email?.calendar_event_count || 0) > 0);
     busyEmailId = emailId;
     if (statusEl) {
       statusEl.hidden = false;
-      statusEl.textContent = 'Extracting calendar events with Ollama…';
+      statusEl.textContent = rescan
+        ? 'Re-scanning calendar dates…'
+        : 'Extracting calendar events with Ollama…';
     }
+    appendActivityLog({
+      ts: new Date().toLocaleTimeString(),
+      level: 'info',
+      message: rescan
+        ? `Calendar re-scan started — ${subject}`
+        : `Calendar — extracting dates from ${subject}…`,
+    });
     renderResults(currentPayload());
 
     try {
@@ -455,15 +467,33 @@
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'Calendar extraction failed');
       const count = data.events_found || 0;
+      const resultMessage =
+        data.message ||
+        (count > 0
+          ? `Calendar: added ${count} event${count === 1 ? '' : 's'} — ${subject}`
+          : `Calendar re-scan: no dates found — not added to calendar — ${subject}`);
       if (statusEl) {
         statusEl.textContent =
           count > 0
             ? `Added ${count} event${count === 1 ? '' : 's'} to calendar.`
-            : 'No calendar dates found in this message.';
+            : 'No calendar dates found — not added to calendar.';
+      }
+      appendActivityLog({
+        ts: new Date().toLocaleTimeString(),
+        level: data.error ? 'warning' : count > 0 ? 'info' : 'warning',
+        message: resultMessage,
+      });
+      if (Array.isArray(data.logs) && data.logs.length) {
+        renderActivityLog(data.logs);
       }
       await runSearch(currentQuery);
     } catch (e) {
       if (statusEl) statusEl.textContent = `Error: ${e}`;
+      appendActivityLog({
+        ts: new Date().toLocaleTimeString(),
+        level: 'warning',
+        message: `Calendar ${rescan ? 're-scan' : 'extract'} failed — ${subject}: ${e}`,
+      });
     } finally {
       busyEmailId = null;
       renderResults(currentPayload());

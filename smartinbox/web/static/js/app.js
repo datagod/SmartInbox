@@ -424,12 +424,15 @@
     if (!emailId || busyCalendarEmailId) return;
     const row = emails.find((e) => e.id === emailId);
     const subject = row?.subject || '(no subject)';
+    const rescan = !!(row?.calendar_extracted || (row?.calendar_event_count || 0) > 0);
     busyCalendarEmailId = emailId;
     renderInbox();
     appendLog({
       ts: new Date().toLocaleTimeString(),
       level: 'info',
-      message: `Calendar — extracting dates from “${subject}”…`,
+      message: rescan
+        ? `Calendar re-scan started — ${subject}`
+        : `Calendar — extracting dates from ${subject}…`,
     });
     try {
       const res = await fetch(`/api/emails/${encodeURIComponent(emailId)}/calendar`, {
@@ -444,19 +447,24 @@
         row.calendar_extracted = true;
         row.calendar_event_count = count;
       }
+      const resultMessage =
+        data.message ||
+        (count > 0
+          ? `Calendar: added ${count} event${count === 1 ? '' : 's'} — ${subject}`
+          : `Calendar re-scan: no dates found — not added to calendar — ${subject}`);
       appendLog({
         ts: new Date().toLocaleTimeString(),
-        level: count > 0 ? 'info' : 'warning',
-        message:
-          count > 0
-            ? `Calendar — added ${count} event${count === 1 ? '' : 's'} from “${subject}”.`
-            : `Calendar — no dates found in “${subject}”.`,
+        level: data.error ? 'warning' : count > 0 ? 'info' : 'warning',
+        message: resultMessage,
       });
+      if (Array.isArray(data.logs) && data.logs.length) {
+        renderActivityLog(data.logs);
+      }
     } catch (e) {
       appendLog({
         ts: new Date().toLocaleTimeString(),
         level: 'warning',
-        message: `Calendar — failed for “${subject}”: ${e}`,
+        message: `Calendar ${rescan ? 're-scan' : 'extract'} failed — ${subject}: ${e}`,
       });
     } finally {
       busyCalendarEmailId = null;
@@ -601,15 +609,46 @@
     summaryBody.textContent = text;
   }
 
+  function sourceProviderLabel(provider) {
+    const key = String(provider || '').toLowerCase();
+    if (key === 'proton') return 'Proton Mail';
+    if (key === 'gmail') return 'Gmail';
+    return 'mail';
+  }
+
+  function selectedEmailSourceUrl() {
+    if (!selectedId) return null;
+    const row = emails.find((e) => e.id === selectedId);
+    const url = row?.source_url;
+    return url ? String(url) : null;
+  }
+
+  function openSelectedEmailSource() {
+    const url = selectedEmailSourceUrl();
+    if (!url || demoMode) return;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }
+
   function updateViewSwitcher() {
     if (!summaryViewOptions.length) return;
     const hasSelection = !!selectedId;
+    const row = emails.find((e) => e.id === selectedId);
+    const sourceUrl = row?.source_url;
     summaryViewOptions.forEach((btn) => {
       const view = btn.dataset.view;
       const active = hasSelection && summaryViewMode === view;
       btn.classList.toggle('is-active', active);
       btn.setAttribute('aria-pressed', active ? 'true' : 'false');
       btn.disabled = !hasSelection;
+    });
+    document.querySelectorAll('.btn-go-source').forEach((btn) => {
+      const enabled = hasSelection && !!sourceUrl && !demoMode;
+      btn.disabled = !enabled;
+      btn.title = enabled
+        ? `Open this message in ${sourceProviderLabel(row?.provider)}`
+        : demoMode
+          ? 'Not available in demo mode'
+          : 'Open in Gmail or Proton (needs Message-ID from a future poll)';
     });
   }
 
@@ -778,6 +817,12 @@
       summaryViewMode = view;
       updateViewSwitcher();
       renderSummaryPanel();
+    });
+  });
+
+  document.querySelectorAll('.btn-go-source').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      openSelectedEmailSource();
     });
   });
 

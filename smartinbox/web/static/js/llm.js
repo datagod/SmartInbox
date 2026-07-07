@@ -20,16 +20,23 @@
   const btnPreviewPrompt = document.getElementById('btn-preview-prompt');
   const btnDeletePromptFile = document.getElementById('btn-delete-prompt-file');
   const spamModelStatus = document.getElementById('spam-model-status');
-  const spamModelPicker = document.getElementById('spam-model-picker');
-  const spamModelSelect = document.getElementById('spam-model-select');
-  const spamOllamaGpu = document.getElementById('spam-ollama-gpu');
+  const spamThreshold = document.getElementById('spam-threshold');
   const spamModelActions = document.getElementById('spam-model-actions');
   const btnSaveSpamModel = document.getElementById('btn-save-spam-model');
 
   let state = null;
   let promptDirty = false;
 
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
   function setStatus(el, text, isError) {
+    if (!el) return;
     el.textContent = text;
     el.className = isError ? 'gmail-status error' : 'gmail-status';
   }
@@ -73,7 +80,7 @@
         const label = p.is_default ? `${p.label} (default file)` : p.label;
         const selected =
           p.filename === data.active_prompt_file ? ' selected' : '';
-        return `<option value="${p.filename}"${selected}>${label}</option>`;
+        return `<option value="${escapeHtml(p.filename)}"${selected}>${escapeHtml(label)}</option>`;
       })
       .join('');
     const hasSelection = !!selectedPromptFilename();
@@ -86,12 +93,12 @@
 
   function renderModels(data) {
     const models = data.models || [];
-    ollamaBaseUrl.textContent = data.base_url || '';
+    if (ollamaBaseUrl) ollamaBaseUrl.textContent = data.base_url || '';
 
     if (!data.reachable) {
-      modelSingle.hidden = true;
-      modelPicker.hidden = true;
-      modelActions.hidden = true;
+      if (modelSingle) modelSingle.hidden = true;
+      if (modelPicker) modelPicker.hidden = true;
+      if (modelActions) modelActions.hidden = true;
       setStatus(ollamaStatus, `Ollama unreachable — ${data.error || 'check config'}`, true);
       return;
     }
@@ -109,20 +116,23 @@
     }
 
     if (models.length <= 1) {
-      modelSingle.hidden = false;
-      modelPicker.hidden = true;
-      modelActions.hidden = true;
-      modelName.textContent = models.length ? models[0].name : selected || '(none)';
+      if (modelSingle) modelSingle.hidden = false;
+      if (modelPicker) modelPicker.hidden = true;
+      if (modelActions) modelActions.hidden = true;
+      if (modelName) {
+        modelName.textContent = models.length ? models[0].name : selected || '(none)';
+      }
       return;
     }
 
-    modelSingle.hidden = true;
-    modelPicker.hidden = false;
-    modelActions.hidden = false;
+    if (modelSingle) modelSingle.hidden = true;
+    if (modelPicker) modelPicker.hidden = false;
+    if (modelActions) modelActions.hidden = false;
+    if (!modelSelect) return;
     modelSelect.innerHTML = models
       .map((m) => {
-        const name = m.name;
-        const selectedAttr = name === selected ? ' selected' : '';
+        const name = escapeHtml(m.name);
+        const selectedAttr = m.name === selected ? ' selected' : '';
         return `<option value="${name}"${selectedAttr}>${name}</option>`;
       })
       .join('');
@@ -137,57 +147,31 @@
 
   function renderSpamModel(data) {
     if (!spamModelStatus) return;
-    const models = data.models || [];
-    const selected = data.spam_model || '';
-    const gpu = data.spam_main_gpu;
+    const spam = data.spam || {};
+    const threshold = spam.threshold ?? 5;
+    const version = spam.version || 'SpamAssassin';
+    const mode = spam.use_spamd ? 'spamd' : 'spamassassin';
 
-    if (!data.reachable) {
-      if (spamModelPicker) spamModelPicker.hidden = true;
-      if (spamModelActions) spamModelActions.hidden = true;
-      setStatus(spamModelStatus, 'Unavailable — Ollama not reachable', true);
-      return;
+    if (spamThreshold) {
+      spamThreshold.value = String(threshold);
     }
 
-    if (data.spam_model_listed) {
+    if (!spam.available) {
+      if (spamModelActions) spamModelActions.hidden = true;
       setStatus(
         spamModelStatus,
-        `Active: ${selected}${gpu == null ? ' · auto GPU' : ` · GPU ${gpu}`}`,
-        false
-      );
-    } else {
-      setStatus(
-        spamModelStatus,
-        `Selected model "${selected}" is not loaded in Ollama`,
+        spam.error || 'SpamAssassin not found — install spamassassin on this host',
         true
       );
-    }
-
-    if (spamOllamaGpu) {
-      spamOllamaGpu.value = gpu == null ? '' : String(gpu);
-    }
-
-    if (!models.length || !spamModelPicker || !spamModelSelect) {
-      if (spamModelPicker) spamModelPicker.hidden = true;
-      if (spamModelActions) spamModelActions.hidden = true;
       return;
     }
 
-    spamModelPicker.hidden = false;
     if (spamModelActions) spamModelActions.hidden = false;
-    spamModelSelect.innerHTML = models
-      .map((m) => {
-        const name = m.name;
-        const selectedAttr = name === selected ? ' selected' : '';
-        return `<option value="${name}"${selectedAttr}>${name}</option>`;
-      })
-      .join('');
-    if (!spamModelSelect.value && selected) {
-      const opt = document.createElement('option');
-      opt.value = selected;
-      opt.textContent = selected;
-      opt.selected = true;
-      spamModelSelect.appendChild(opt);
-    }
+    setStatus(
+      spamModelStatus,
+      `Active: ${version} · ${mode} · threshold ${threshold}`,
+      false
+    );
   }
 
   function renderPrompt(data) {
@@ -195,22 +179,36 @@
       promptsDir.textContent = data.prompts_dir;
     }
     renderSavedPrompts(data);
-    if (!promptDirty) {
+    if (!promptDirty && systemPrompt) {
       systemPrompt.value = data.system_prompt || '';
     }
     updatePromptStatus();
-    btnResetPrompt.disabled = !data.is_custom_prompt && !promptDirty;
+    if (btnResetPrompt) {
+      btnResetPrompt.disabled = !data.is_custom_prompt && !promptDirty;
+    }
   }
 
   async function loadLlm() {
-    const res = await fetch('/api/llm');
-    state = await res.json();
-    renderModels(state);
-    renderSpamModel(state);
-    renderPrompt(state);
+    try {
+      const res = await fetch('/api/llm');
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+      }
+      state = await res.json();
+      renderModels(state);
+      renderSpamModel(state);
+      renderPrompt(state);
+    } catch (e) {
+      setStatus(ollamaStatus, `Failed to load LLM settings — ${e}`, true);
+      setStatus(spamModelStatus, 'Spam check status unavailable', true);
+      if (promptStatus) {
+        promptStatus.textContent = 'Could not load prompt settings';
+        promptStatus.className = 'llm-prompt-status dirty';
+      }
+    }
   }
 
-  systemPrompt.addEventListener('input', () => {
+  systemPrompt?.addEventListener('input', () => {
     promptDirty = true;
     updatePromptStatus();
     btnResetPrompt.disabled = false;
@@ -225,30 +223,28 @@
   });
 
   btnSaveSpamModel?.addEventListener('click', async () => {
-    const model = spamModelSelect ? spamModelSelect.value : '';
-    const gpuRaw = spamOllamaGpu ? spamOllamaGpu.value.trim() : '';
-    const mainGpu = gpuRaw === '' ? 'auto' : Number(gpuRaw);
+    const threshold = spamThreshold ? Number(spamThreshold.value) : 5;
     btnSaveSpamModel.disabled = true;
     try {
       const res = await fetch('/api/llm/spam', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model, main_gpu: mainGpu }),
+        body: JSON.stringify({ threshold }),
       });
       const data = await res.json();
       if (!data.ok) {
-        setStatus(spamModelStatus, data.error || 'Failed to save spam settings', true);
+        setStatus(spamModelStatus, data.error || 'Failed to save spam threshold', true);
         return;
       }
       await loadLlm();
-      setStatus(spamModelStatus, `Spam settings saved: ${data.model}`, false);
+      setStatus(spamModelStatus, `Spam threshold saved: ${data.threshold}`, false);
     } finally {
       btnSaveSpamModel.disabled = false;
     }
   });
 
-  btnSaveModel.addEventListener('click', async () => {
-    const model = modelSelect.value;
+  btnSaveModel?.addEventListener('click', async () => {
+    const model = modelSelect ? modelSelect.value : '';
     btnSaveModel.disabled = true;
     try {
       const res = await fetch('/api/llm/model', {
@@ -269,8 +265,8 @@
     }
   });
 
-  btnSavePrompt.addEventListener('click', async () => {
-    const prompt = systemPrompt.value.trim();
+  btnSavePrompt?.addEventListener('click', async () => {
+    const prompt = systemPrompt ? systemPrompt.value.trim() : '';
     if (!prompt) {
       setStatus(promptStatus, 'Prompt cannot be empty', true);
       return;
@@ -425,7 +421,7 @@
     }
   });
 
-  btnResetPrompt.addEventListener('click', async () => {
+  btnResetPrompt?.addEventListener('click', async () => {
     btnResetPrompt.disabled = true;
     try {
       const res = await fetch('/api/llm/prompt/reset', { method: 'POST' });
