@@ -101,7 +101,33 @@ from smartinbox.db import (
     set_setting,
     update_email_spam,
     update_email_summary,
+    update_email_tags,
     upsert_email,
+)
+from smartinbox.email_middleman import (
+    TAG_INDIAN_MIDDLEMAN,
+    TAG_POSSIBLE_INDIAN_MIDDLEMAN,
+    add_confirmed_foreign_middleman,
+    add_confirmed_indian_middleman,
+    classify_foreign_middleman,
+    classify_possible_indian_middleman,
+    confirmed_tags_for_sender,
+    emails_matching_middleman_scope,
+    extract_sender_domain,
+    extract_sender_email,
+    format_foreign_middleman_activity_messages,
+    format_middleman_activity_messages,
+    is_confirmed_indian_middleman_sender,
+    is_confirmed_middleman_sender,
+    is_foreign_middleman_tag,
+    parse_email_tags,
+    parse_foreign_middleman_country,
+    promote_tags_to_confirmed,
+    promote_tags_to_foreign,
+    public_tag_entries,
+    tags_for_email,
+    foreign_middleman_tag_id,
+    country_flag_and_name,
 )
 from smartinbox.storage_stats import get_storage_stats
 from smartinbox.sender_interest import (
@@ -165,9 +191,12 @@ from smartinbox.imap_mail import (
     test_imap_login,
 )
 from smartinbox.tts_recording_cache import (
+    DEFAULT_PHRASE_RECORDING_RETENTION_HOURS,
     format_email_alert_message,
     load_event_tts_prefs,
+    normalize_phrase_recording_retention_hours,
     prepend_sender_announcement,
+    prune_expired_phrase_recordings,
     recording_filename,
     resolve_recordings_dir,
     save_event_tts_prefs,
@@ -290,6 +319,10 @@ class SmartInboxCore:
         self._alert_greeting_name = str(prefs.get("alert_greeting_name") or "").strip()
         self._alert_greeting_enabled = bool(prefs.get("alert_greeting_enabled"))
         self._voice_summary_enabled = bool(prefs.get("voice_summary_enabled"))
+        self._phrase_recording_retention_hours = normalize_phrase_recording_retention_hours(
+            prefs.get("phrase_recording_retention_hours", DEFAULT_PHRASE_RECORDING_RETENTION_HOURS)
+        )
+        self._last_phrase_prune_at = 0.0
 
         saved_watermark = get_setting(self._conn, "inbox_watermark")
         self._inbox_watermark = (
@@ -379,6 +412,20 @@ class SmartInboxCore:
         }
         self._last_alert_at = 0.0
         self._last_poll_at: float | None = None
+
+        # Background web company-origin lookups (Foreign Middleman enrichment).
+        cl_cfg = dict(s.get("company_lookup") or {})
+        self._company_lookup_enabled = bool(cl_cfg.get("enabled", True))
+        self._company_lookup_timeout = max(
+            3.0, float(cl_cfg.get("timeout", 12))
+        )
+        self._company_lookup_max_pages = max(
+            1, min(int(cl_cfg.get("max_pages", 3)), 6)
+        )
+        self._company_lookup_use_process = bool(cl_cfg.get("use_process", True))
+        self._company_lookup_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._company_lookup_task: asyncio.Task[None] | None = None
+        self._company_lookup_inflight: set[str] = set()
 
     def add_update_listener(self, listener: UpdateListener) -> None:
         self._listeners.append(listener)
@@ -533,7 +580,31 @@ class SmartInboxCore:
             alert_greeting_name=self._alert_greeting_name,
             alert_greeting_enabled=self._alert_greeting_enabled,
             voice_summary_enabled=self._voice_summary_enabled,
+            phrase_recording_retention_hours=self._phrase_recording_retention_hours,
         )
+
+    def get_phrase_recording_retention_hours(self) -> float:
+        return self._phrase_recording_retention_hours
+
+    def set_phrase_recording_retention_hours(self, hours: float) -> float:
+        self._phrase_recording_retention_hours = normalize_phrase_recording_retention_hours(hours)
+        self._save_tts_prefs()
+        return self._phrase_recording_retention_hours
+
+    def prune_phrase_recordings(self) -> dict[str, Any]:
+        cache_dir = str(self.chatterbox_tts_config.get("cache_dir", "localrecordings"))
+        result = prune_expired_phrase_recordings(
+            cache_dir,
+            retention_hours=self._phrase_recording_retention_hours,
+        )
+        deleted = result.get("deleted") or []
+        if deleted:
+            self.add_log(
+                f"Pruned {len(deleted)} expired phrase recording(s) "
+                f"(older than {self._phrase_recording_retention_hours:g}h)",
+                "info",
+            )
+        return result
 
     def get_poll_interval(self) -> float:
         return self._poll_interval
@@ -3259,6 +3330,642 @@ class SmartInboxCore:
         self._notify_emails()
         return self._demo_mode
 
+    def _log_middleman_details(
+        self,
+        result: dict[str, Any],
+        *,
+        subject: str,
+        sender: str | None,
+        context: str,
+        source: str = "",
+    ) -> None:
+        """Write activity log detail for third-party recruiter checks.
+
+        Emitted as a single multi-line entry so live SSE prepend keeps order.
+        """
+        lines = format_middleman_activity_messages(
+            result,
+            subject=subject,
+            sender=sender,
+            context=context,
+            source=source,
+        )
+        if not lines:
+            return
+        self.add_log("\n".join(lines), "middleman")
+
+    def _apply_email_tags(
+        self,
+        msg: dict[str, Any],
+        *,
+        persist: bool = True,
+        notify_on_new: bool = True,
+        log_details: bool = True,
+        log_always: bool = False,
+        log_source: str = "",
+    ) -> list[str]:
+        """Classify tags (middleman, …) and optionally store them on the row.
+
+        Activity log:
+        - Newly flagged → always log full details
+        - Tag cleared → always log
+        - ``log_always`` (new mail / re-scan) → always log outcome including
+          not-flagged, so the activity log shows the middleman check ran
+        """
+        email_id = str(msg.get("id") or "")
+        sender = str(msg.get("sender") or "")
+        subject_raw = str(msg.get("subject") or "(no subject)")
+        existing = parse_email_tags(msg.get("tags"))
+        forced_tags: list[str] = []
+        if not self._demo_mode:
+            forced_tags = confirmed_tags_for_sender(self._conn, sender)
+        confirmed_indian = (
+            is_confirmed_indian_middleman_sender(self._conn, sender)
+            if not self._demo_mode
+            else False
+        ) or TAG_INDIAN_MIDDLEMAN in existing or TAG_INDIAN_MIDDLEMAN in forced_tags
+        classification = classify_possible_indian_middleman(
+            sender=sender,
+            subject=subject_raw,
+            body=str(msg.get("body_text") or ""),
+            snippet=str(msg.get("snippet") or ""),
+        )
+        foreign = classify_foreign_middleman(
+            sender=sender,
+            subject=subject_raw,
+            body=str(msg.get("body_text") or ""),
+            snippet=str(msg.get("snippet") or ""),
+        )
+        tags = tags_for_email(
+            sender=sender,
+            subject=subject_raw,
+            body=str(msg.get("body_text") or ""),
+            snippet=str(msg.get("snippet") or ""),
+            existing_tags=existing,
+            confirmed=confirmed_indian,
+            confirmed_tags=forced_tags,
+        )
+        msg["tags"] = tags
+        msg["tag_entries"] = public_tag_entries(tags)
+        msg["_middleman_classification"] = classification
+        msg["_foreign_middleman_classification"] = foreign
+        had_possible = TAG_POSSIBLE_INDIAN_MIDDLEMAN in existing
+        had_confirmed = TAG_INDIAN_MIDDLEMAN in existing
+        had_foreign = any(is_foreign_middleman_tag(t) for t in existing)
+        is_possible = TAG_POSSIBLE_INDIAN_MIDDLEMAN in tags
+        is_confirmed = TAG_INDIAN_MIDDLEMAN in tags
+        is_foreign = any(is_foreign_middleman_tag(t) for t in tags)
+        if persist and email_id:
+            update_email_tags(self._conn, email_id, tags)
+            subject = self._log_subject(subject_raw)
+            src = (log_source or "").strip()
+            log_context: str | None = None
+            notify = False
+            if is_confirmed and not had_confirmed and confirmed_indian:
+                # Auto-tagged from confirmed list / domain.
+                src_note = f" ({src})" if src else ""
+                self.add_log(
+                    f"Middleman check{src_note}: CONFIRMED Indian Middleman "
+                    f"(known sender/domain) — {subject}\n"
+                    f"  Sender: {sender}",
+                    "middleman",
+                )
+                notify = True
+            elif is_possible and not had_possible and not is_confirmed:
+                log_context = "tagged"
+            elif had_possible and not is_possible and not is_confirmed:
+                log_context = "cleared"
+            elif log_always and is_possible:
+                log_context = "confirmed"
+            elif log_always and is_confirmed:
+                src_note = f" ({src})" if src else ""
+                self.add_log(
+                    f"Middleman check{src_note}: CONFIRMED Indian Middleman "
+                    f"(on list) — {subject}",
+                    "middleman",
+                )
+            elif log_always:
+                log_context = "checked"
+
+            # Log when foreign tag applied from confirmed DB list.
+            forced_foreign = [t for t in forced_tags if is_foreign_middleman_tag(t)]
+            if forced_foreign and not had_foreign and is_foreign:
+                src_note = f" ({src})" if src else ""
+                from smartinbox.email_middleman import tag_label as _mm_label
+
+                self.add_log(
+                    f"Foreign middleman check{src_note}: CONFIRMED "
+                    f"{_mm_label(forced_foreign[0])} (known sender/domain) — {subject}\n"
+                    f"  Sender: {sender}",
+                    "middleman",
+                )
+                notify = True
+
+            if log_details and log_context:
+                self._log_middleman_details(
+                    classification,
+                    subject=subject,
+                    sender=sender,
+                    context=log_context,
+                    source=src,
+                )
+                if log_context == "tagged":
+                    notify = True
+
+            # Foreign middleman (Canada job + non-Canadian company).
+            foreign_context: str | None = None
+            if is_foreign and not had_foreign:
+                foreign_context = "tagged"
+            elif had_foreign and not is_foreign:
+                # Cleared — only mention when always logging or was tagged.
+                if log_always or log_details:
+                    src_note = f" ({src})" if src else ""
+                    self.add_log(
+                        f"Foreign middleman check{src_note}: cleared — {subject}",
+                        "middleman",
+                    )
+            elif log_always and is_foreign:
+                foreign_context = "confirmed"
+            elif log_always:
+                foreign_context = "checked"
+
+            if log_details and foreign_context:
+                lines = format_foreign_middleman_activity_messages(
+                    foreign,
+                    subject=subject,
+                    sender=sender,
+                    context=foreign_context,
+                    source=src,
+                )
+                if lines:
+                    self.add_log("\n".join(lines), "middleman")
+                if foreign_context == "tagged":
+                    notify = True
+
+            if notify and notify_on_new:
+                self._notify_emails()
+
+            # Optional background web enrichment (does not block mail pipeline).
+            # Only queue on new-mail / re-scan paths (log_always), not silent backfill.
+            if (
+                self._company_lookup_enabled
+                and not self._demo_mode
+                and log_always
+            ):
+                self._queue_company_lookup(
+                    msg,
+                    foreign_result=foreign,
+                    log_source=src or "background",
+                )
+        return tags
+
+    def _queue_company_lookup(
+        self,
+        msg: dict[str, Any],
+        *,
+        foreign_result: dict[str, Any] | None = None,
+        log_source: str = "",
+    ) -> None:
+        """Enqueue a non-blocking web company-origin lookup for middleman refinement."""
+        from smartinbox.company_lookup import (
+            company_name_from_sender,
+            get_cached_lookup,
+            should_lookup_company,
+        )
+
+        if not self._company_lookup_enabled or self._demo_mode:
+            return
+        email_id = str(msg.get("id") or "")
+        sender = str(msg.get("sender") or "")
+        if not email_id or not sender:
+            return
+        foreign = foreign_result or msg.get("_foreign_middleman_classification") or {}
+        if not should_lookup_company(sender=sender, foreign_result=foreign):
+            return
+        domain = extract_sender_domain(sender)
+        company_name = company_name_from_sender(sender)
+        # Serve cache immediately when present.
+        cached = get_cached_lookup(
+            self._conn, domain=domain, company_name=company_name
+        )
+        if cached and cached.get("country_code"):
+            self._apply_company_lookup_result(
+                email_id,
+                lookup=cached,
+                log_source=log_source or "cache",
+                from_cache=True,
+            )
+            return
+        dedupe = f"{email_id}|{(domain or '').lower()}|{(company_name or '').lower()}"
+        if dedupe in self._company_lookup_inflight:
+            return
+        self._company_lookup_inflight.add(dedupe)
+        try:
+            self._company_lookup_queue.put_nowait(
+                {
+                    "email_id": email_id,
+                    "sender": sender,
+                    "subject": str(msg.get("subject") or ""),
+                    "domain": domain,
+                    "company_name": company_name,
+                    "log_source": log_source or "web",
+                    "dedupe": dedupe,
+                    "foreign": dict(foreign) if isinstance(foreign, dict) else {},
+                }
+            )
+            subject = self._log_subject(str(msg.get("subject") or "(no subject)"))
+            target = domain or company_name or "unknown"
+            self.add_log(
+                f"Company web lookup queued for {target} — {subject}",
+                "middleman",
+            )
+        except asyncio.QueueFull:
+            self._company_lookup_inflight.discard(dedupe)
+
+    async def _company_lookup_worker(self) -> None:
+        """Background worker: one web lookup at a time."""
+        while self._running:
+            try:
+                job = await asyncio.wait_for(
+                    self._company_lookup_queue.get(), timeout=1.0
+                )
+            except asyncio.TimeoutError:
+                continue
+            except asyncio.CancelledError:
+                raise
+            dedupe = str(job.get("dedupe") or "")
+            try:
+                await self._run_company_lookup_job(job)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self.add_log(f"Company web lookup failed: {exc}", "warning")
+            finally:
+                if dedupe:
+                    self._company_lookup_inflight.discard(dedupe)
+                try:
+                    self._company_lookup_queue.task_done()
+                except Exception:
+                    pass
+
+    async def _run_company_lookup_job(self, job: dict[str, Any]) -> None:
+        from smartinbox.company_lookup import (
+            lookup_company_on_web,
+            lookup_company_on_web_sync,
+            save_lookup,
+        )
+
+        email_id = str(job.get("email_id") or "")
+        domain = job.get("domain")
+        company_name = job.get("company_name")
+        subject = self._log_subject(str(job.get("subject") or "(no subject)"))
+        target = domain or company_name or "unknown"
+        self.add_log(
+            f"Company web lookup started for {target} — {subject}",
+            "middleman",
+        )
+
+        if self._company_lookup_use_process:
+            # Isolate HTTP scraping in a worker process so the mail loop stays free.
+            result = await asyncio.to_thread(
+                self._company_lookup_in_process,
+                domain=domain,
+                company_name=company_name,
+                timeout=self._company_lookup_timeout,
+                max_pages=self._company_lookup_max_pages,
+            )
+        else:
+            result = await lookup_company_on_web(
+                domain=domain if isinstance(domain, str) else None,
+                company_name=company_name if isinstance(company_name, str) else None,
+                timeout=self._company_lookup_timeout,
+                max_pages=self._company_lookup_max_pages,
+            )
+
+        try:
+            save_lookup(
+                self._conn,
+                domain=result.get("domain") or domain,
+                company_name=result.get("company_name") or company_name,
+                country_code=result.get("country_code"),
+                source=str(result.get("source") or "web"),
+                evidence=str(result.get("evidence") or ""),
+                confidence=float(result.get("confidence") or 0),
+                raw_notes=str(result.get("raw_notes") or ""),
+            )
+        except Exception as exc:
+            self.add_log(f"Company lookup cache save failed: {exc}", "warning")
+
+        if not result.get("country_code"):
+            self.add_log(
+                f"Company web lookup: no country found for {target} — {subject}",
+                "middleman",
+            )
+            return
+
+        self._apply_company_lookup_result(
+            email_id,
+            lookup=result,
+            log_source=str(job.get("log_source") or "web"),
+            from_cache=False,
+        )
+
+    def _company_lookup_in_process(
+        self,
+        *,
+        domain: str | None,
+        company_name: str | None,
+        timeout: float,
+        max_pages: int,
+    ) -> dict[str, Any]:
+        """Run lookup in a separate process (fallback to thread on failure)."""
+        from concurrent.futures import ProcessPoolExecutor, TimeoutError as FuturesTimeout
+
+        from smartinbox.company_lookup import lookup_company_on_web_sync
+
+        kwargs = {
+            "domain": domain,
+            "company_name": company_name,
+            "timeout": timeout,
+            "max_pages": max_pages,
+        }
+        try:
+            with ProcessPoolExecutor(max_workers=1) as pool:
+                fut = pool.submit(lookup_company_on_web_sync, **kwargs)
+                return fut.result(timeout=timeout + 15)
+        except FuturesTimeout:
+            return {
+                "ok": False,
+                "error": "process timeout",
+                "country_code": None,
+                "confidence": 0.0,
+                "source": "process-timeout",
+                "evidence": "",
+            }
+        except Exception as exc:
+            # Spawned process can fail on some platforms; fall back to sync in-thread.
+            try:
+                return lookup_company_on_web_sync(**kwargs)
+            except Exception as exc2:
+                return {
+                    "ok": False,
+                    "error": f"{exc}; fallback: {exc2}",
+                    "country_code": None,
+                    "confidence": 0.0,
+                    "source": "process-error",
+                    "evidence": "",
+                }
+
+    def _apply_company_lookup_result(
+        self,
+        email_id: str,
+        *,
+        lookup: dict[str, Any],
+        log_source: str = "web",
+        from_cache: bool = False,
+    ) -> None:
+        """Re-tag an email using web/cache company country and log details."""
+        from smartinbox.company_lookup import apply_web_country_to_foreign_result
+        from smartinbox.email_middleman import (
+            classify_foreign_middleman,
+            is_foreign_middleman_tag,
+            strip_foreign_middleman_tags,
+            tag_label,
+        )
+
+        row = get_email(self._conn, email_id)
+        if row is None:
+            return
+        sender = str(row.get("sender") or "")
+        subject_raw = str(row.get("subject") or "(no subject)")
+        subject = self._log_subject(subject_raw)
+        body = str(row.get("body_text") or "")
+        snippet = str(row.get("snippet") or "")
+        foreign = classify_foreign_middleman(
+            sender=sender, subject=subject_raw, body=body, snippet=snippet
+        )
+        cc = lookup.get("country_code")
+        conf = float(lookup.get("confidence") or 0)
+        evidence = str(lookup.get("evidence") or "")
+        source = str(lookup.get("source") or log_source)
+        merged = apply_web_country_to_foreign_result(
+            foreign,
+            country_code=str(cc) if cc else None,
+            confidence=conf,
+            source=source,
+            evidence=evidence,
+        )
+        existing = parse_email_tags(row.get("tags"))
+        had_foreign = any(is_foreign_middleman_tag(t) for t in existing)
+        new_tags = strip_foreign_middleman_tags(set(existing))
+        for t in merged.get("tags") or []:
+            new_tags.add(t)
+        # Keep indian tags untouched.
+        tag_list = sorted(new_tags)
+        update_email_tags(self._conn, email_id, tag_list)
+        is_foreign = any(is_foreign_middleman_tag(t) for t in tag_list)
+        flag = merged.get("country_flag") or lookup.get("country_flag") or ""
+        cname = merged.get("country_name") or lookup.get("country_name") or ""
+        origin = f"{flag} {cname}".strip() or str(cc or "unknown")
+        via = "cache" if from_cache else "web"
+        src_note = f" ({log_source})" if log_source else ""
+
+        if is_foreign and not had_foreign:
+            label = tag_label((merged.get("tags") or ["foreign_middleman"])[0])
+            self.add_log(
+                f"Company web lookup{src_note}: applied {label} — {subject}\n"
+                f"  Sender: {sender}\n"
+                f"  Company origin: {origin} (confidence {conf:.2f}, via {via})\n"
+                f"  Evidence: {evidence[:240] or '(none)'}\n"
+                f"  Sources: {source[:200]}",
+                "middleman",
+            )
+            self._notify_emails()
+        elif is_foreign and had_foreign:
+            self.add_log(
+                f"Company web lookup{src_note}: confirmed origin {origin} — {subject}\n"
+                f"  Confidence {conf:.2f} via {via}",
+                "middleman",
+            )
+        elif str(cc or "").upper() in ("CA",):
+            self.add_log(
+                f"Company web lookup{src_note}: Canadian company "
+                f"(no Foreign Middleman) — {subject}\n"
+                f"  Evidence: {evidence[:240] or '(none)'}",
+                "middleman",
+            )
+            if had_foreign:
+                self._notify_emails()
+        else:
+            self.add_log(
+                f"Company web lookup{src_note}: origin {origin} "
+                f"(no tag change) — {subject}",
+                "middleman",
+            )
+
+    def confirm_indian_middleman(self, email_id: str) -> dict[str, Any]:
+        """User confirmed Possible → Indian Middleman; store + domain fan-out."""
+        return self.confirm_middleman(email_id, kind="indian")
+
+    def confirm_foreign_middleman(
+        self, email_id: str, *, country_code: str | None = None
+    ) -> dict[str, Any]:
+        """User clicked Foreign Middleman tag; store + domain fan-out."""
+        return self.confirm_middleman(
+            email_id, kind="foreign", country_code=country_code
+        )
+
+    def confirm_middleman(
+        self,
+        email_id: str,
+        *,
+        kind: str | None = None,
+        country_code: str | None = None,
+    ) -> dict[str, Any]:
+        """Confirm middleman from inbox tag click (indian or foreign)."""
+        if self._demo_mode:
+            raise ValueError("Cannot confirm middlemen in demo mode")
+        msg = get_email(self._conn, email_id)
+        if msg is None:
+            raise ValueError("email not found")
+        sender = str(msg.get("sender") or "")
+        subject = str(msg.get("subject") or "")
+        email_addr = extract_sender_email(sender)
+        if not email_addr:
+            raise ValueError("Could not parse sender email address from this message")
+        domain = extract_sender_domain(sender)
+        existing = parse_email_tags(msg.get("tags"))
+        foreign_tags = [t for t in existing if is_foreign_middleman_tag(t)]
+
+        # Infer kind from tags when not specified.
+        kind_norm = (kind or "").strip().lower()
+        if kind_norm not in ("indian", "foreign"):
+            if foreign_tags:
+                kind_norm = "foreign"
+            elif (
+                TAG_POSSIBLE_INDIAN_MIDDLEMAN in existing
+                or TAG_INDIAN_MIDDLEMAN in existing
+            ):
+                kind_norm = "indian"
+            else:
+                raise ValueError(
+                    "No middleman tag on this email to confirm "
+                    "(need Possible Indian or Foreign Middleman)"
+                )
+
+        if kind_norm == "indian":
+            entry = add_confirmed_indian_middleman(
+                self._conn,
+                sender=sender,
+                source_email_id=email_id,
+                source_subject=subject,
+                notes="Confirmed from inbox tag click",
+            )
+            tag_id = TAG_INDIAN_MIDDLEMAN
+            promote = lambda tags: promote_tags_to_confirmed(tags)
+            title = "Indian Middleman"
+        else:
+            # Prefer country from existing foreign tag, then arg, then reclassify.
+            cc = (country_code or "").strip().upper() or None
+            tag_id = foreign_tags[0] if foreign_tags else None
+            if not cc and tag_id:
+                cc = parse_foreign_middleman_country(tag_id)
+            if not cc:
+                foreign = classify_foreign_middleman(
+                    sender=sender,
+                    subject=subject,
+                    body=str(msg.get("body_text") or ""),
+                    snippet=str(msg.get("snippet") or ""),
+                )
+                cc = foreign.get("country_code")
+                if foreign.get("tag_id"):
+                    tag_id = foreign["tag_id"]
+            if not tag_id:
+                tag_id = foreign_middleman_tag_id(cc)
+            entry = add_confirmed_foreign_middleman(
+                self._conn,
+                sender=sender,
+                country_code=cc,
+                tag_id=tag_id,
+                source_email_id=email_id,
+                source_subject=subject,
+                notes="Confirmed from Foreign Middleman tag click",
+            )
+            tag_id = str(entry.get("tag_id") or tag_id)
+            promote = lambda tags: promote_tags_to_foreign(tags, tag_id=tag_id)
+            flag, cname = country_flag_and_name(entry.get("country_code") or cc)
+            title = f"Foreign Middleman {flag}".strip() if flag else "Foreign Middleman"
+            if cname:
+                title = f"{title} ({cname})"
+
+        auto_domain = bool(int(entry.get("auto_domain") or 0))
+        matches = emails_matching_middleman_scope(
+            self._conn,
+            sender_key=str(entry.get("sender_key") or email_addr),
+            domain=str(entry.get("domain") or domain),
+            auto_domain=auto_domain,
+        )
+        tagged_ids: list[str] = []
+        final_tags: list[str] = []
+        for row in matches:
+            rid = str(row.get("id") or "")
+            if not rid:
+                continue
+            new_tags = promote(parse_email_tags(row.get("tags")))
+            update_email_tags(self._conn, rid, new_tags)
+            tagged_ids.append(rid)
+            if rid == email_id:
+                final_tags = new_tags
+        if email_id not in tagged_ids:
+            final_tags = promote(parse_email_tags(msg.get("tags")))
+            update_email_tags(self._conn, email_id, final_tags)
+            tagged_ids.append(email_id)
+        if not final_tags:
+            final_tags = promote(parse_email_tags(msg.get("tags")))
+
+        scope = (
+            f"domain @{domain} ({len(tagged_ids)} messages)"
+            if auto_domain
+            else f"sender {email_addr} only (free-mail domain; {len(tagged_ids)} messages)"
+        )
+        flag = entry.get("country_flag") or ""
+        cname = entry.get("country_name") or ""
+        origin_line = ""
+        if kind_norm == "foreign":
+            origin_line = f"  Country: {(flag + ' ' + cname).strip() or entry.get('country_code') or 'unknown'}\n"
+        self.add_log(
+            f"{title} confirmed and saved to middlemen database\n"
+            f"  Sender: {sender}\n"
+            f"  Email: {email_addr}\n"
+            f"  Domain: {domain or '(none)'}\n"
+            f"{origin_line}"
+            f"  Auto-tag scope: {scope}\n"
+            f"  Source: {self._log_subject(subject)}",
+            "middleman",
+        )
+        self._notify_emails()
+        return {
+            "email_id": email_id,
+            "kind": kind_norm,
+            "entry": entry,
+            "tagged_count": len(tagged_ids),
+            "tagged_email_ids": tagged_ids,
+            "auto_domain": auto_domain,
+            "domain": domain,
+            "email_address": email_addr,
+            "country_code": entry.get("country_code"),
+            "country_flag": entry.get("country_flag"),
+            "tag_id": entry.get("tag_id") or tag_id,
+            "tags": final_tags,
+            "tag_entries": public_tag_entries(final_tags),
+        }
+
+    def _enrich_email_tags_public(self, data: dict[str, Any]) -> dict[str, Any]:
+        tags = parse_email_tags(data.get("tags"))
+        data["tags"] = tags
+        data["tag_entries"] = public_tag_entries(tags)
+        return data
+
     def _enrich_inbox_email_rows(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         email_ids = [str(row.get("id") or "") for row in rows if row.get("id")]
         counts = calendar_extraction_event_counts(self._conn, email_ids)
@@ -3271,6 +3978,11 @@ class SmartInboxCore:
             data["calendar_event_count"] = (
                 max(0, int(count)) if count is not None and count >= 0 else 0
             )
+            # Backfill tags for older rows that predate the detector.
+            if data.get("tags") is None and email_id:
+                self._apply_email_tags(data, persist=True)
+            else:
+                self._enrich_email_tags_public(data)
             enriched.append(enrich_email_source_url(data))
         return enriched
 
@@ -3295,7 +4007,12 @@ class SmartInboxCore:
         row = get_email(self._conn, email_id)
         if row is None:
             return None
-        return enrich_email_source_url(row)
+        data = dict(row)
+        if data.get("tags") is None:
+            self._apply_email_tags(data, persist=True)
+        else:
+            self._enrich_email_tags_public(data)
+        return enrich_email_source_url(data)
 
     def search_emails(
         self,
@@ -3333,20 +4050,128 @@ class SmartInboxCore:
         *,
         force: bool = False,
     ) -> dict[str, Any]:
+        """Manual extract / re-scan for one email.
+
+        When ``force`` is true (inbox Re-scan), runs in order:
+        1) spam check → 2) third-party recruiter (middleman) → 3) calendar.
+        Each step is written to the activity log.
+        """
         if self._demo_mode:
             return {
                 "email_id": email_id,
                 "events_found": 0,
                 "demo_mode": True,
                 "message": "Calendar extraction is disabled in demo mode",
+                "tags": [],
+                "tag_entries": [],
+                "possible_indian_middleman": False,
+                "is_spam": False,
             }
         msg = get_email(self._conn, email_id)
         if msg is None:
             raise ValueError("email not found")
         subject = self._log_subject(str(msg.get("subject") or "(no subject)"))
+        prior_tags = parse_email_tags(msg.get("tags"))
+        had_middleman = (
+            TAG_POSSIBLE_INDIAN_MIDDLEMAN in prior_tags
+            or TAG_INDIAN_MIDDLEMAN in prior_tags
+        )
+        is_spam: bool | None = None
+        tags: list[str] = list(prior_tags)
+
         if force:
             reset_calendar_data_for_emails(self._conn, [email_id])
-            self.add_log(f"Calendar re-scan started — {subject}", "info")
+            self.add_log(
+                f"Re-scan started (spam → middleman → calendar) — {subject}",
+                "info",
+            )
+
+            # --- 1/3 Spam ---
+            self.add_log(f"Re-scan [1/3] Spam check — {subject}", "info")
+            try:
+                is_spam = await self._classify_email_spam(msg)
+            except Exception as exc:
+                is_spam = None
+                self.add_log(
+                    f"Re-scan [1/3] Spam check failed — {subject}: {exc}",
+                    "warning",
+                )
+            if is_spam is True:
+                self.add_log(
+                    f"Re-scan [1/3] Spam result: JUNK — {subject}",
+                    "warning",
+                )
+            elif is_spam is False:
+                self.add_log(
+                    f"Re-scan [1/3] Spam result: not spam — {subject}",
+                    "info",
+                )
+            else:
+                self.add_log(
+                    f"Re-scan [1/3] Spam result: unavailable (check skipped or failed) — {subject}",
+                    "warning",
+                )
+            # Refresh row after spam column update.
+            refreshed = get_email(self._conn, email_id)
+            if refreshed:
+                msg = refreshed
+
+            # --- 2/3 Middleman / third-party recruiter ---
+            self.add_log(
+                f"Re-scan [2/3] Third-party recruiter (middleman) check — {subject}",
+                "middleman",
+            )
+            tags = self._apply_email_tags(
+                msg,
+                persist=True,
+                notify_on_new=False,
+                log_details=True,
+                log_always=True,
+                log_source="re-scan",
+            )
+            foreign_tags = [t for t in tags if is_foreign_middleman_tag(t)]
+            middleman = (
+                TAG_POSSIBLE_INDIAN_MIDDLEMAN in tags
+                or TAG_INDIAN_MIDDLEMAN in tags
+                or bool(foreign_tags)
+            )
+            summary_bits: list[str] = []
+            if TAG_INDIAN_MIDDLEMAN in tags:
+                summary_bits.append("CONFIRMED Indian Middleman")
+            elif TAG_POSSIBLE_INDIAN_MIDDLEMAN in tags:
+                summary_bits.append("possible Indian middleman")
+            if foreign_tags:
+                from smartinbox.email_middleman import tag_label as _mm_label
+
+                summary_bits.append(_mm_label(foreign_tags[0]))
+            if summary_bits:
+                self.add_log(
+                    f"Re-scan [2/3] Middleman result: FLAGGED "
+                    f"{'; '.join(summary_bits)} — {subject}",
+                    "middleman",
+                )
+            else:
+                self.add_log(
+                    f"Re-scan [2/3] Middleman result: not flagged — {subject}",
+                    "middleman",
+                )
+
+            # --- 3/3 Calendar ---
+            self.add_log(f"Re-scan [3/3] Calendar extract — {subject}", "info")
+        else:
+            # First-time extract still refreshes tags quietly when new.
+            tags = self._apply_email_tags(
+                msg,
+                persist=True,
+                notify_on_new=False,
+                log_details=True,
+                log_always=False,
+            )
+            middleman = (
+                TAG_POSSIBLE_INDIAN_MIDDLEMAN in tags
+                or TAG_INDIAN_MIDDLEMAN in tags
+            )
+
         result = await self._extract_calendar_for_email(
             msg,
             except_email_id=email_id,
@@ -3355,7 +4180,7 @@ class SmartInboxCore:
         events_found = int(result.get("events_found", 0))
         detail = str(result.get("message") or "").strip()
         if force and detail:
-            message = f"Calendar re-scan: {detail} — {subject}"
+            message = f"Re-scan complete: calendar {detail}"
         elif events_found > 0:
             message = (
                 f"Calendar: added {events_found} event"
@@ -3365,6 +4190,20 @@ class SmartInboxCore:
             message = f"Calendar: {detail} — {subject}"
         else:
             message = f"Calendar: no dates found — {subject}"
+        if force:
+            spam_note = (
+                "junk"
+                if is_spam is True
+                else "not spam"
+                if is_spam is False
+                else "spam n/a"
+            )
+            mm_note = "middleman" if middleman else "no middleman"
+            message = (
+                f"Re-scan complete ({spam_note}; {mm_note}; "
+                f"calendar events={events_found}) — {subject}"
+            )
+            self.add_log(message, "info")
         self._notify_emails()
         return {
             "email_id": email_id,
@@ -3374,6 +4213,11 @@ class SmartInboxCore:
             "message": message,
             "source": result.get("source") or "",
             "error": result.get("error"),
+            "tags": tags,
+            "tag_entries": public_tag_entries(tags),
+            "possible_indian_middleman": middleman,
+            "is_spam": bool(is_spam) if is_spam is not None else None,
+            "had_middleman": had_middleman,
         }
 
     def _update_demo_email(self, email_id: str, **fields: Any) -> dict[str, Any] | None:
@@ -3930,7 +4774,9 @@ class SmartInboxCore:
         else:
             settings = dict(self.chatterbox_tts_config)
         settings = apply_delivery_mode_settings(settings, self.get_event_tts_delivery_mode())
-        return apply_tts_model_settings(settings, self.get_event_tts_model())
+        settings = apply_tts_model_settings(settings, self.get_event_tts_model())
+        settings["phrase_recording_retention_hours"] = self._phrase_recording_retention_hours
+        return settings
 
     def get_snapshot(self) -> dict[str, Any]:
         mail = mail_accounts_status(self._conn)
@@ -3962,6 +4808,7 @@ class SmartInboxCore:
                 "saved_voice_style_prompts": self.list_voice_style_prompts(),
                 "delivery_modes": list(DELIVERY_MODES),
                 "tts_model": self.get_event_tts_model(),
+                "phrase_recording_retention_hours": self._phrase_recording_retention_hours,
                 "alert_template": self.chatterbox_tts_config.get("alert_template"),
             },
             "calendar": {
@@ -3997,13 +4844,30 @@ class SmartInboxCore:
                 "No mail accounts connected — add Gmail or Proton in Settings",
                 "warning",
             )
+        self.prune_phrase_recordings()
+        self._last_phrase_prune_at = time.time()
         await self.poll_inbox()
         self._poll_task = asyncio.create_task(self._poll_loop())
         self._self_heal_task = asyncio.create_task(self._self_heal_loop())
+        if self._company_lookup_enabled:
+            self._company_lookup_task = asyncio.create_task(
+                self._company_lookup_worker()
+            )
+            self.add_log(
+                "Company web lookup worker started (middleman enrichment)",
+                "info",
+            )
         self._track_email_task(self._startup_ollama_pipeline())
 
     async def stop(self) -> None:
         self._running = False
+        if self._company_lookup_task:
+            self._company_lookup_task.cancel()
+            try:
+                await self._company_lookup_task
+            except asyncio.CancelledError:
+                pass
+            self._company_lookup_task = None
         if self._self_heal_task:
             self._self_heal_task.cancel()
             try:
@@ -4045,6 +4909,9 @@ class SmartInboxCore:
             await asyncio.sleep(self._poll_interval)
             try:
                 await self.poll_inbox()
+                if time.time() - self._last_phrase_prune_at >= 3600.0:
+                    self._last_phrase_prune_at = time.time()
+                    self.prune_phrase_recordings()
             except Exception as e:
                 self.add_log(f"Poll error: {e}", "error")
 
@@ -4480,6 +5347,18 @@ class SmartInboxCore:
         email_id = str(msg.get("id") or "")
         sender = str(msg.get("sender") or "")
         try:
+            # Tag heuristics are cheap and run before spam/LLM so the inbox
+            # can show badges even when summary/calendar work is skipped.
+            # Always log the middleman outcome for new mail (hit or not).
+            self._apply_email_tags(
+                msg,
+                persist=True,
+                notify_on_new=True,
+                log_details=True,
+                log_always=True,
+                log_source="new mail",
+            )
+
             if is_sender_downvoted(self._conn, sender):
                 self._skip_email_llm_pipeline(
                     msg,
@@ -4674,11 +5553,13 @@ class SmartInboxCore:
                     base_text,
                     greeting_name,
                     enabled=greeting_on,
+                    timezone=self.timezone,
                 )
                 spoken = prepend_name_greeting(
                     spoken,
                     greeting_name,
                     enabled=greeting_on,
+                    timezone=self.timezone,
                 )
 
         if not spoken:
@@ -4698,6 +5579,7 @@ class SmartInboxCore:
                 base_text,
                 greeting_name,
                 enabled=greeting_on,
+                timezone=self.timezone,
             )
             spoken = apply_delivery_mode(
                 base_text,

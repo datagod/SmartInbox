@@ -174,10 +174,19 @@
             <button type="button" class="settings-view-option" data-value="on">On</button>
           </div>
         </div>
+        <label class="set-field">
+          <span>Keep phrase recordings (hours)</span>
+          <input type="number" class="set-input" id="phrase-recording-retention" min="0" max="720" step="1" value="24">
+        </label>
       </div>
       <p class="set-hint">
-        When enabled, alerts may start with a random greeting like
-        “Hello Bill”, “Attention good sir Bill”, or “Bill, you have mail” before the email announcement.
+        Delivery phrase audio in <code>localrecordings/phrases/</code> is removed after this many hours
+        (default 24). Use <strong>0</strong> to keep recordings indefinitely.
+      </p>
+      <p class="set-hint">
+        When enabled, alerts may start with a short greeting like
+        “Good morning Bill”, “Good evening Bill”, “Hello Bill”, or “Bill, you have mail”
+        (time-of-day greetings use your configured timezone).
       </p>
       <p class="set-hint">
         <strong>Voice summary</strong> greets you by name (when enabled), announces who the email is from,
@@ -294,6 +303,6 @@
   </div>
   <script src="/static/js/alerts.js?v=1"></script>
   <script src="/static/js/activity-log-resize.js?v=3"></script>
-  <script src="/static/js/settings.js?v=15"></script>
+  <script src="/static/js/settings.js?v=16"></script>
 </body>
 </html>

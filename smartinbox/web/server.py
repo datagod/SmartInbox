@@ -877,6 +877,7 @@ def create_app(core: SmartInboxCore) -> FastAPI:
             "tts_model": core.get_event_tts_model(),
             "alert_greeting_name": core.get_alert_greeting_name(),
             "alert_greeting_enabled": core.get_alert_greeting_enabled(),
+            "phrase_recording_retention_hours": core.get_phrase_recording_retention_hours(),
             "voice_summary_enabled": core.get_voice_summary_enabled(),
             "voice_style_prompt": core.get_voice_style_system_prompt(),
             "voice_style_prompt_file": core.get_voice_style_prompt_file(),
@@ -907,6 +908,8 @@ def create_app(core: SmartInboxCore) -> FastAPI:
             )
         if "voice_summary_enabled" in body:
             core.set_voice_summary_enabled(bool(body.get("voice_summary_enabled")))
+        if "phrase_recording_retention_hours" in body:
+            core.set_phrase_recording_retention_hours(body.get("phrase_recording_retention_hours"))
         if "voice_style_prompt" in body:
             prompt = str(body.get("voice_style_prompt") or "").strip()
             if prompt:
@@ -916,6 +919,7 @@ def create_app(core: SmartInboxCore) -> FastAPI:
             "chosen": core.get_event_tts_voice(),
             "alert_greeting_name": core.get_alert_greeting_name(),
             "alert_greeting_enabled": core.get_alert_greeting_enabled(),
+            "phrase_recording_retention_hours": core.get_phrase_recording_retention_hours(),
             "voice_summary_enabled": core.get_voice_summary_enabled(),
             "voice_style_prompt": core.get_voice_style_system_prompt(),
             "voice_style_prompt_file": core.get_voice_style_prompt_file(),
@@ -937,6 +941,7 @@ def create_app(core: SmartInboxCore) -> FastAPI:
                 "tts_model": core.get_event_tts_model(),
                 "alert_greeting_name": core.get_alert_greeting_name(),
                 "alert_greeting_enabled": core.get_alert_greeting_enabled(),
+                "phrase_recording_retention_hours": core.get_phrase_recording_retention_hours(),
                 "voice_summary_enabled": core.get_voice_summary_enabled(),
             })
         except Exception as e:
@@ -1511,6 +1516,33 @@ def create_app(core: SmartInboxCore) -> FastAPI:
             result = await core.extract_calendar_for_email_id(email_id, force=force)
         except ValueError as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=404)
+        return JSONResponse(
+            {
+                "ok": True,
+                **result,
+                "logs": core.get_process_view().get("logs") or [],
+            }
+        )
+
+    @app.post("/api/emails/{email_id}/confirm-middleman")
+    async def api_confirm_middleman(email_id: str, request: Request):
+        """Confirm Indian or Foreign middleman from inbox tag click; store + domain fan-out."""
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        kind = body.get("kind")  # "indian" | "foreign" | auto from tags
+        country_code = body.get("country_code")
+        try:
+            result = core.confirm_middleman(
+                email_id,
+                kind=str(kind) if kind else None,
+                country_code=str(country_code) if country_code else None,
+            )
+        except ValueError as e:
+            err = str(e)
+            code = 404 if "not found" in err.lower() else 400
+            return JSONResponse({"ok": False, "error": err}, status_code=code)
         return JSONResponse(
             {
                 "ok": True,

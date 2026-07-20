@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ _MEDIA_TYPES = {"wav": "audio/wav", "mp3": "audio/mpeg", "opus": "audio/opus"}
 _PHRASES_SUBDIR = "phrases"
 _KNOWN_DELIVERY_MODES = frozenset({"conspiracy", "panicky", "neurotic", "playful", "normal"})
 _KNOWN_TTS_MODELS = frozenset({"chatterbox_turbo", "chatterbox", "chatterbox_multilingual"})
+DEFAULT_PHRASE_RECORDING_RETENTION_HOURS = 24.0
 
 
 def resolve_recordings_dir(save_dir: str) -> Path:
@@ -64,6 +66,10 @@ def load_event_tts_prefs(cache_dir: str) -> dict[str, Any]:
         prefs["alerts_enabled"] = bool(data["alerts_enabled"])
     if "voice_summary_enabled" in data:
         prefs["voice_summary_enabled"] = bool(data["voice_summary_enabled"])
+    if "phrase_recording_retention_hours" in data:
+        prefs["phrase_recording_retention_hours"] = normalize_phrase_recording_retention_hours(
+            data.get("phrase_recording_retention_hours")
+        )
     return prefs
 
 
@@ -80,6 +86,7 @@ def save_event_tts_prefs(
     alert_greeting_name: str | None = None,
     alert_greeting_enabled: bool | None = None,
     voice_summary_enabled: bool | None = None,
+    phrase_recording_retention_hours: float | None = None,
 ) -> None:
     path = event_voice_pref_path(cache_dir)
     existing = load_event_tts_prefs(cache_dir)
@@ -133,8 +140,75 @@ def save_event_tts_prefs(
         payload["voice_summary_enabled"] = bool(voice_summary_enabled)
     elif "voice_summary_enabled" in extra:
         payload["voice_summary_enabled"] = extra["voice_summary_enabled"]
+    if phrase_recording_retention_hours is not None:
+        payload["phrase_recording_retention_hours"] = normalize_phrase_recording_retention_hours(
+            phrase_recording_retention_hours
+        )
+    elif "phrase_recording_retention_hours" in extra:
+        payload["phrase_recording_retention_hours"] = normalize_phrase_recording_retention_hours(
+            extra["phrase_recording_retention_hours"]
+        )
 
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def normalize_phrase_recording_retention_hours(value: Any) -> float:
+    """Clamp phrase cache retention; 0 means keep recordings indefinitely."""
+    try:
+        hours = float(value)
+    except (TypeError, ValueError):
+        return DEFAULT_PHRASE_RECORDING_RETENTION_HOURS
+    if hours <= 0:
+        return 0.0
+    return max(1.0, min(720.0, hours))
+
+
+def phrase_recording_is_fresh(
+    path: Path,
+    *,
+    retention_hours: float,
+    now: float | None = None,
+) -> bool:
+    if retention_hours <= 0:
+        return True
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return False
+    return mtime >= (now or time.time()) - retention_hours * 3600.0
+
+
+def prune_expired_phrase_recordings(
+    cache_dir: str,
+    *,
+    retention_hours: float,
+    now: float | None = None,
+) -> dict[str, Any]:
+    """Delete cached delivery phrases older than retention_hours."""
+    hours = normalize_phrase_recording_retention_hours(retention_hours)
+    if hours <= 0:
+        return {"deleted": [], "errors": {}, "skipped": True}
+    cutoff = (now or time.time()) - hours * 3600.0
+    root = phrases_dir(cache_dir)
+    deleted: list[str] = []
+    errors: dict[str, str] = {}
+    for entry in root.iterdir():
+        if not entry.is_file():
+            continue
+        if entry.name.startswith(".") or entry.suffix.lower() == ".tmp":
+            continue
+        if entry.suffix.lower() not in _RECORDING_EXTENSIONS:
+            continue
+        try:
+            if entry.stat().st_size <= 0:
+                continue
+            if entry.stat().st_mtime >= cutoff:
+                continue
+            entry.unlink()
+            deleted.append(entry.name)
+        except OSError as e:
+            errors[entry.name] = str(e)
+    return {"deleted": deleted, "errors": errors, "skipped": False}
 
 
 def voice_key_from_settings(settings: dict[str, Any]) -> str:

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import random
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from smartinbox.chatterbox_models import normalize_tts_model
 
@@ -557,21 +559,67 @@ def pick_neurotic_phrase() -> str:
     return random.choice(NEUROTIC_PHRASES)
 
 
-def pick_name_greeting(name: str) -> str:
+def _local_hour(timezone: str | None) -> int:
+    try:
+        tz = ZoneInfo(timezone or "UTC")
+    except Exception:
+        tz = ZoneInfo("UTC")
+    return datetime.now(tz).hour
+
+
+def time_greeting_templates(hour: int) -> tuple[str, ...]:
+    """Short time-of-day greetings for the given local hour (0–23)."""
+    if 5 <= hour < 12:
+        return (
+            "Good morning {name}",
+            "Morning {name}",
+            "Good morning, {name}",
+        )
+    if 12 <= hour < 17:
+        return (
+            "Good afternoon {name}",
+            "Afternoon {name}",
+            "Good afternoon, {name}",
+        )
+    if 17 <= hour < 22:
+        return (
+            "Good evening {name}",
+            "Evening {name}",
+            "Good evening, {name}",
+        )
+    return (
+        "Good night {name}",
+        "Hey {name}",
+        "Hi {name}",
+    )
+
+
+def pick_name_greeting(name: str, *, timezone: str | None = None) -> str:
     """Pick a random spoken greeting for the configured user name."""
     clean = (name or "").strip()
     if not clean:
         return ""
-    template = random.choice(NAME_GREETING_TEMPLATES)
+    hour = _local_hour(timezone)
+    timed = time_greeting_templates(hour)
+    if timezone and timed and random.random() < 0.6:
+        template = random.choice(timed)
+    else:
+        template = random.choice(NAME_GREETING_TEMPLATES + timed)
     return template.format(name=clean)
 
 
-def prepend_name_greeting(text: str, name: str | None, *, enabled: bool) -> str:
+def prepend_name_greeting(
+    text: str,
+    name: str | None,
+    *,
+    enabled: bool,
+    timezone: str | None = None,
+) -> str:
     """Prepend a random name greeting before an alert when enabled."""
     base = (text or "").strip()
     if not enabled or not base:
         return base
-    greeting = pick_name_greeting(name or "")
+    greeting = pick_name_greeting(name or "", timezone=timezone)
     if not greeting:
         return base
     return f"{greeting}. {base}"
@@ -645,28 +693,17 @@ _NEUROTIC_TAG_SKIP_SUBSTRINGS = (
 
 NAME_GREETING_TEMPLATES: tuple[str, ...] = (
     "Hello {name}",
+    "Hi {name}",
+    "Hey {name}",
     "Attention {name}",
-    "{name}, may I have your attention please!",
-    "Attention good sir {name}",
-    "Attention good {name}",
-    "Pardon the interruption, {name}",
-    "A moment of your time, {name}",
-    "Dear {name}",
     "Heads up, {name}",
-    "{name}, urgent mail incoming",
-    "{name}, incoming transmission",
+    "Dear {name}",
     "Message for {name}",
     "Mail for {name}",
-    "News for {name}",
     "{name}, you have mail",
-    "If I may, {name}",
-    "Kind attention, {name}",
-    "Your attention please, {name}",
-    "Reporting for {name}",
-    "Good morrow, {name}",
-    "A word if you please, {name}",
-    "{name}, something has arrived",
-    "{name}, fresh mail for you",
+    "{name}, incoming mail",
+    "Pardon the interruption, {name}",
+    "A moment of your time, {name}",
 )
 
 

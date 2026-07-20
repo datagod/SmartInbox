@@ -64,6 +64,11 @@ def init_db(conn: sqlite3.Connection) -> None:
     init_imap_accounts_table(conn)
     init_sender_interest_table(conn)
     init_calendar_tables(conn)
+    from smartinbox.email_middleman import init_indian_middlemen_table
+    from smartinbox.company_lookup import init_company_lookup_table
+
+    init_indian_middlemen_table(conn)
+    init_company_lookup_table(conn)
 
 
 def _ensure_email_account_columns(conn: sqlite3.Connection) -> None:
@@ -78,6 +83,7 @@ def _ensure_email_account_columns(conn: sqlite3.Connection) -> None:
         ("sender_key", "ALTER TABLE emails ADD COLUMN sender_key TEXT"),
         ("imap_uid", "ALTER TABLE emails ADD COLUMN imap_uid TEXT"),
         ("rfc822_message_id", "ALTER TABLE emails ADD COLUMN rfc822_message_id TEXT"),
+        ("tags", "ALTER TABLE emails ADD COLUMN tags TEXT"),
     ):
         if name not in cols:
             conn.execute(ddl)
@@ -217,6 +223,24 @@ def update_email_spam(
     conn.execute(
         "UPDATE emails SET is_spam = ? WHERE id = ?",
         (1 if is_spam else 0, email_id),
+    )
+    conn.commit()
+
+
+def update_email_tags(
+    conn: sqlite3.Connection, email_id: str, tags: list[str] | str | None
+) -> None:
+    from smartinbox.email_middleman import parse_email_tags, serialize_email_tags
+
+    if isinstance(tags, str):
+        tag_list = parse_email_tags(tags)
+    elif tags is None:
+        tag_list = []
+    else:
+        tag_list = parse_email_tags(list(tags))
+    conn.execute(
+        "UPDATE emails SET tags = ? WHERE id = ?",
+        (serialize_email_tags(tag_list), email_id),
     )
     conn.commit()
 

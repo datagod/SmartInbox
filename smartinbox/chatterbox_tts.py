@@ -17,6 +17,8 @@ from smartinbox.important_senders import sanitize_text_for_tts
 from smartinbox.tts_recording_cache import (
     load_cached_recording,
     media_type_for_filename,
+    normalize_phrase_recording_retention_hours,
+    phrase_recording_is_fresh,
     phrase_recording_path,
     recording_path,
     save_recording,
@@ -307,14 +309,21 @@ async def get_or_synthesize_phrase(
         _tts_locks[lock_key] = lock
 
     async with lock:
+        retention_hours = normalize_phrase_recording_retention_hours(
+            settings.get("phrase_recording_retention_hours")
+        )
         if path.is_file() and path.stat().st_size > 0:
-            ext = path.suffix.lower().lstrip(".")
-            return (
-                path.read_bytes(),
-                media_type_for_filename(path.name),
-                True,
-                str(path),
-            )
+            if phrase_recording_is_fresh(path, retention_hours=retention_hours):
+                return (
+                    path.read_bytes(),
+                    media_type_for_filename(path.name),
+                    True,
+                    str(path),
+                )
+            try:
+                path.unlink()
+            except OSError:
+                pass
         audio, media_type = await synthesize_speech(spoken_text, settings=settings)
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_bytes(audio)

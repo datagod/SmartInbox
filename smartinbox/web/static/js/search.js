@@ -48,13 +48,28 @@
     );
   }
 
+  function isMiddlemanLog(entry) {
+    const lvl = String(entry?.level || '').toLowerCase();
+    if (lvl === 'middleman') return true;
+    const msg = String(entry?.message || '');
+    return (
+      /middleman/i.test(msg) ||
+      /third-party recruiter/i.test(msg) ||
+      /Suspected third-party/i.test(msg)
+    );
+  }
+
   function buildLogElement(entry) {
     const div = document.createElement('div');
     const lvl = (entry.level || 'info').replace('warning', 'warn');
     const msg = String(entry.message || '');
     const highlight = isHighlightedLog(msg);
-    div.className = highlight ? 'activity-entry activity-entry--success' : 'activity-entry';
-    const tsClass = highlight ? 'success' : lvl;
+    const middleman = isMiddlemanLog(entry);
+    let cls = 'activity-entry';
+    if (highlight) cls += ' activity-entry--success';
+    if (middleman) cls += ' activity-entry--middleman';
+    div.className = cls;
+    const tsClass = highlight ? 'success' : middleman ? 'middleman' : lvl;
     div.innerHTML = `<span class="lvl-${tsClass}">[${entry.ts}]</span> ${escapeHtml(msg)}`;
     return div;
   }
@@ -129,6 +144,36 @@
     }
   }
 
+  function linkifyPlainText(text) {
+    const raw = String(text || '');
+    if (!raw) return '';
+    const urlRe = /(https?:\/\/[^\s<>"'`]+|www\.[^\s<>"'`]+)/gi;
+    let out = '';
+    let last = 0;
+    let match;
+    while ((match = urlRe.exec(raw)) !== null) {
+      out += escapeHtml(raw.slice(last, match.index));
+      let url = match[0];
+      let trailing = '';
+      while (/[.,);:!?\]]$/.test(url)) {
+        trailing = url.slice(-1) + trailing;
+        url = url.slice(0, -1);
+      }
+      const href = /^www\./i.test(url) ? `https://${url}` : url;
+      if (/^https?:\/\//i.test(href)) {
+        out +=
+          `<a class="original-email-link" href="${escapeHtml(href)}" ` +
+          `target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a>`;
+      } else {
+        out += escapeHtml(url);
+      }
+      out += escapeHtml(trailing);
+      last = match.index + match[0].length;
+    }
+    out += escapeHtml(raw.slice(last));
+    return out;
+  }
+
   function plainTextToEmailHtml(text) {
     const normalized = String(text || '').replace(/\r\n/g, '\n').trim();
     if (!normalized) return '<p>(empty message)</p>';
@@ -137,7 +182,7 @@
       .map((block) => {
         const lines = block
           .split('\n')
-          .map((line) => escapeHtml(line))
+          .map((line) => linkifyPlainText(line))
           .join('<br>');
         return `<p>${lines}</p>`;
       })
@@ -453,8 +498,8 @@
       ts: new Date().toLocaleTimeString(),
       level: 'info',
       message: rescan
-        ? `Calendar re-scan started — ${subject}`
-        : `Calendar — extracting dates from ${subject}…`,
+        ? `Re-scan requested (spam → middleman → calendar) — ${subject}`
+        : `Scan requested (spam → middleman → calendar) — ${subject}`,
     });
     renderResults(currentPayload());
 
@@ -467,24 +512,27 @@
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || 'Calendar extraction failed');
       const count = data.events_found || 0;
-      const resultMessage =
-        data.message ||
-        (count > 0
-          ? `Calendar: added ${count} event${count === 1 ? '' : 's'} — ${subject}`
-          : `Calendar re-scan: no dates found — not added to calendar — ${subject}`);
       if (statusEl) {
-        statusEl.textContent =
+        let statusText =
           count > 0
             ? `Added ${count} event${count === 1 ? '' : 's'} to calendar.`
             : 'No calendar dates found — not added to calendar.';
+        if (data.possible_indian_middleman) {
+          statusText += ' Middleman flagged.';
+        }
+        if (data.is_spam) {
+          statusText += ' Spam/junk.';
+        }
+        statusEl.textContent = statusText;
       }
-      appendActivityLog({
-        ts: new Date().toLocaleTimeString(),
-        level: data.error ? 'warning' : count > 0 ? 'info' : 'warning',
-        message: resultMessage,
-      });
       if (Array.isArray(data.logs) && data.logs.length) {
         renderActivityLog(data.logs);
+      } else {
+        appendActivityLog({
+          ts: new Date().toLocaleTimeString(),
+          level: data.error ? 'warning' : 'info',
+          message: data.message || `Re-scan finished — ${subject}`,
+        });
       }
       await runSearch(currentQuery);
     } catch (e) {

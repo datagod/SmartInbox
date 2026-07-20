@@ -5,10 +5,13 @@
   const summaryBody = document.getElementById('summary-body');
   const summaryTheme = document.getElementById('summary-theme');
   const activityLog = document.getElementById('activity-log');
+  const activityLogPanel = document.getElementById('activity-log-panel');
   const connStatus = document.getElementById('conn-status');
   const btnPoll = document.getElementById('btn-poll');
   const btnEmptyInbox = document.getElementById('btn-empty-inbox');
   const btnClearActivityLog = document.getElementById('btn-clear-activity-log');
+  const btnHideActivityLog = document.getElementById('btn-hide-activity-log');
+  const btnShowActivityLog = document.getElementById('btn-show-activity-log');
   const btnResummarize = document.getElementById('btn-resummarize');
   const summaryViewOptions = document.querySelectorAll('.summary-view-option');
   const volumeSlider = document.getElementById('alert-volume');
@@ -16,6 +19,7 @@
   const THEME_KEY = 'smartinbox.summaryTheme';
   const INBOX_HIDDEN_KEY = 'smartinbox-inbox-hidden';
   const VOLUME_KEY = 'smartinbox-alert-volume';
+  const ACTIVITY_LOG_HIDDEN_KEY = 'smartinbox-activity-log-hidden';
   const THEME_OPTIONS = [
     { value: 'mainframe', label: '1970s mainframe' },
     { value: 'dotmatrix', label: '80s dot matrix printer' },
@@ -163,12 +167,29 @@
     return String(kb).localeCompare(String(ka));
   }
 
+  function isMiddlemanLog(entry) {
+    const lvl = String(entry?.level || '').toLowerCase();
+    if (lvl === 'middleman') return true;
+    const msg = String(entry?.message || '');
+    return (
+      /middleman/i.test(msg) ||
+      /third-party recruiter/i.test(msg) ||
+      /Suspected third-party/i.test(msg) ||
+      /Foreign middleman/i.test(msg)
+    );
+  }
+
   function buildLogElement(entry) {
     const div = document.createElement('div');
-    const lvl = (entry.level || 'info').replace('warning', 'warn');
+    const rawLvl = String(entry.level || 'info');
+    const lvl = rawLvl.replace('warning', 'warn');
     const isInboxCheck = String(entry.message || '').startsWith('Inbox check');
-    div.className = isInboxCheck ? 'activity-entry activity-entry--success' : 'activity-entry';
-    const tsClass = isInboxCheck ? 'success' : lvl;
+    const middleman = isMiddlemanLog(entry);
+    let cls = 'activity-entry';
+    if (isInboxCheck) cls += ' activity-entry--success';
+    if (middleman) cls += ' activity-entry--middleman';
+    div.className = cls;
+    const tsClass = isInboxCheck ? 'success' : middleman ? 'middleman' : lvl;
     div.innerHTML = `<span class="lvl-${tsClass}">[${entry.ts}]</span> ${escapeHtml(entry.message)}`;
     return div;
   }
@@ -214,6 +235,38 @@
     }
   }
 
+  function linkifyPlainText(text) {
+    // Turn bare URLs into safe <a> tags after escaping surrounding text.
+    const raw = String(text || '');
+    if (!raw) return '';
+    const urlRe = /(https?:\/\/[^\s<>"'`]+|www\.[^\s<>"'`]+)/gi;
+    let out = '';
+    let last = 0;
+    let match;
+    while ((match = urlRe.exec(raw)) !== null) {
+      out += escapeHtml(raw.slice(last, match.index));
+      let url = match[0];
+      // Keep trailing sentence punctuation outside the link.
+      let trailing = '';
+      while (/[.,);:!?\]]$/.test(url)) {
+        trailing = url.slice(-1) + trailing;
+        url = url.slice(0, -1);
+      }
+      const href = /^www\./i.test(url) ? `https://${url}` : url;
+      if (/^https?:\/\//i.test(href)) {
+        out +=
+          `<a class="original-email-link" href="${escapeHtml(href)}" ` +
+          `target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a>`;
+      } else {
+        out += escapeHtml(url);
+      }
+      out += escapeHtml(trailing);
+      last = match.index + match[0].length;
+    }
+    out += escapeHtml(raw.slice(last));
+    return out;
+  }
+
   function plainTextToEmailHtml(text) {
     const normalized = String(text || '').replace(/\r\n/g, '\n').trim();
     if (!normalized) return '<p>(empty message)</p>';
@@ -222,7 +275,7 @@
       .map((block) => {
         const lines = block
           .split('\n')
-          .map((line) => escapeHtml(line))
+          .map((line) => linkifyPlainText(line))
           .join('<br>');
         return `<p>${lines}</p>`;
       })
@@ -427,12 +480,14 @@
     const rescan = !!(row?.calendar_extracted || (row?.calendar_event_count || 0) > 0);
     busyCalendarEmailId = emailId;
     renderInbox();
+    // Server owns the activity log for the full pipeline; only a short local
+    // kickoff line so the UI reacts immediately before SSE arrives.
     appendLog({
       ts: new Date().toLocaleTimeString(),
       level: 'info',
       message: rescan
-        ? `Calendar re-scan started — ${subject}`
-        : `Calendar — extracting dates from ${subject}…`,
+        ? `Re-scan requested (spam → middleman → calendar) — ${subject}`
+        : `Scan requested (spam → middleman → calendar) — ${subject}`,
     });
     try {
       const res = await fetch(`/api/emails/${encodeURIComponent(emailId)}/calendar`, {
@@ -446,25 +501,27 @@
       if (row) {
         row.calendar_extracted = true;
         row.calendar_event_count = count;
+        if (Array.isArray(data.tags)) row.tags = data.tags;
+        if (Array.isArray(data.tag_entries)) row.tag_entries = data.tag_entries;
+        if (data.is_spam === true || data.is_spam === false) {
+          row.is_spam = data.is_spam ? 1 : 0;
+        }
       }
-      const resultMessage =
-        data.message ||
-        (count > 0
-          ? `Calendar: added ${count} event${count === 1 ? '' : 's'} — ${subject}`
-          : `Calendar re-scan: no dates found — not added to calendar — ${subject}`);
-      appendLog({
-        ts: new Date().toLocaleTimeString(),
-        level: data.error ? 'warning' : count > 0 ? 'info' : 'warning',
-        message: resultMessage,
-      });
+      // Prefer server activity log (includes spam + middleman + calendar steps).
       if (Array.isArray(data.logs) && data.logs.length) {
         renderActivityLog(data.logs);
+      } else {
+        appendLog({
+          ts: new Date().toLocaleTimeString(),
+          level: data.error ? 'warning' : 'info',
+          message: data.message || `Re-scan finished — ${subject}`,
+        });
       }
     } catch (e) {
       appendLog({
         ts: new Date().toLocaleTimeString(),
         level: 'warning',
-        message: `Calendar ${rescan ? 're-scan' : 'extract'} failed — ${subject}: ${e}`,
+        message: `Re-scan failed — ${subject}: ${e}`,
       });
     } finally {
       busyCalendarEmailId = null;
@@ -529,13 +586,65 @@
           e.calendar_event_count > 0
             ? `<span class="inbox-cal-badge" title="${e.calendar_event_count} calendar event${e.calendar_event_count === 1 ? '' : 's'}">${e.calendar_event_count} on calendar</span> `
             : '';
-        return `<div class="email-item${sel}${imp}${starred ? ' starred' : ''}${junk}${spam}" data-id="${escapeHtml(e.id)}" tabindex="-1">
+        const tagEntries = Array.isArray(e.tag_entries)
+          ? e.tag_entries
+          : (Array.isArray(e.tags) ? e.tags.map((id) => ({ id, label: String(id).replace(/_/g, ' ') })) : []);
+        const tagBadges = tagEntries
+          .map((t) => {
+            const id = escapeHtml(t.id || '');
+            // Plain text + flag image (Twemoji SVG) — emoji fonts are often missing on Linux.
+            const flagRaw = t.flag || t.country_flag || '';
+            const flagImg = t.flag_img || '';
+            let textRaw = t.label_text || '';
+            if (!textRaw) {
+              textRaw = String(t.label || t.id || 'tag').replace(/\s*[\u{1F1E6}-\u{1F1FF}]{2}\s*$/u, '').trim();
+            }
+            if (!textRaw) textRaw = String(t.id || 'tag').replace(/_/g, ' ');
+            const text = escapeHtml(textRaw);
+            let flagHtml = '';
+            if (flagImg) {
+              flagHtml = `<img class="tag-flag-img" src="${escapeHtml(flagImg)}" alt="${escapeHtml(flagRaw || 'flag')}" width="14" height="14" loading="lazy" decoding="async">`;
+            } else if (flagRaw) {
+              flagHtml = `<span class="tag-flag" aria-hidden="true">${flagRaw}</span>`;
+            }
+            const title = escapeHtml(t.title || `${textRaw}${flagRaw ? ' ' + flagRaw : ''}`);
+            const isForeignTag =
+              t.id === 'foreign_middleman' || String(t.id || '').startsWith('foreign_middleman_');
+            const clickable =
+              t.clickable ||
+              t.id === 'possible_indian_middleman' ||
+              isForeignTag;
+            const confirmAction =
+              t.confirm_action ||
+              (t.id === 'possible_indian_middleman' ? 'indian' : isForeignTag ? 'foreign' : '');
+            const countryCode = escapeHtml(t.country_code || '');
+            const inner = `${text}${flagHtml ? ` ${flagHtml}` : ''}`;
+            if (clickable && !demoMode && confirmAction) {
+              const aria =
+                confirmAction === 'foreign'
+                  ? 'Save Foreign Middleman to database'
+                  : 'Confirm as Indian Middleman';
+              return `<button type="button" class="email-tag-badge tag-${id} tag-clickable" data-tag-action="confirm-middleman" data-confirm-kind="${escapeHtml(confirmAction)}" data-country-code="${countryCode}" title="${title}" aria-label="${aria}">${inner}</button> `;
+            }
+            return `<span class="email-tag-badge tag-${id}" title="${title}">${inner}</span> `;
+          })
+          .join('');
+        const hasPossible = tagEntries.some((t) => t.id === 'possible_indian_middleman');
+        const hasConfirmed = tagEntries.some((t) => t.id === 'indian_middleman');
+        const hasForeign = tagEntries.some(
+          (t) => t.id === 'foreign_middleman' || String(t.id || '').startsWith('foreign_middleman_'),
+        );
+        let middleman = '';
+        if (hasConfirmed) middleman += ' middleman-confirmed';
+        if (hasPossible) middleman += ' middleman-suspect';
+        if (hasForeign) middleman += ' foreign-middleman';
+        return `<div class="email-item${sel}${imp}${starred ? ' starred' : ''}${junk}${spam}${middleman}" data-id="${escapeHtml(e.id)}" tabindex="-1">
           <div class="email-votes" role="group" aria-label="Rate sender">
             <button type="button" class="vote-btn vote-up${upActive}" data-vote="up" title="Interested in this sender" aria-label="Upvote sender">▲</button>
             <button type="button" class="vote-btn vote-down${downActive}" data-vote="down" title="Mark sender as junk" aria-label="Downvote sender">▼</button>
           </div>
           <div class="email-item-body">
-            <div class="email-subject">${badge}${calBadge}${prov}${escapeHtml(e.subject || '(no subject)')}</div>
+            <div class="email-subject">${badge}${calBadge}${prov}${tagBadges}${escapeHtml(e.subject || '(no subject)')}</div>
             <div class="email-meta">${escapeHtml(e.sender || '')} · ${fmtTime(e.received_at)}</div>
           </div>
           <div class="email-item-actions">
@@ -547,12 +656,12 @@
       .join('');
     inboxList.querySelectorAll('.email-item').forEach((el) => {
       el.addEventListener('click', (ev) => {
-        if (ev.target.closest('.vote-btn, .btn-hide-email, .btn-add-calendar')) return;
+        if (ev.target.closest('.vote-btn, .btn-hide-email, .btn-add-calendar, .tag-clickable')) return;
         setInboxKeyboardNav(false);
         selectEmail(el.dataset.id);
       });
       el.addEventListener('dblclick', (ev) => {
-        if (ev.target.closest('.vote-btn, .btn-hide-email, .btn-add-calendar')) return;
+        if (ev.target.closest('.vote-btn, .btn-hide-email, .btn-add-calendar, .tag-clickable')) return;
         ev.preventDefault();
         ev.stopPropagation();
         starEmail(el.dataset.id);
@@ -574,7 +683,89 @@
         ev.stopPropagation();
         hideInboxEmail(el.dataset.id);
       });
+      el.querySelectorAll('[data-tag-action="confirm-middleman"]').forEach((btn) => {
+        btn.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          ev.stopPropagation();
+          confirmMiddleman(el.dataset.id, {
+            kind: btn.dataset.confirmKind || '',
+            countryCode: btn.dataset.countryCode || '',
+          });
+        });
+      });
     });
+  }
+
+  async function confirmMiddleman(emailId, opts = {}) {
+    if (!emailId || demoMode) return;
+    const row = emails.find((e) => e.id === emailId);
+    const subject = row?.subject || '(no subject)';
+    const kind = opts.kind || '';
+    const countryCode = opts.countryCode || '';
+    const label =
+      kind === 'foreign'
+        ? `Foreign Middleman${countryCode ? ' (' + countryCode + ')' : ''}`
+        : 'Indian Middleman';
+    appendLog({
+      ts: new Date().toLocaleTimeString(),
+      level: 'middleman',
+      message: `Saving ${label} to middlemen database — ${subject}`,
+    });
+    try {
+      const res = await fetch(
+        `/api/emails/${encodeURIComponent(emailId)}/confirm-middleman`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            kind: kind || undefined,
+            country_code: countryCode || undefined,
+          }),
+        },
+      );
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'Confirm failed');
+      if (Array.isArray(data.logs) && data.logs.length) {
+        renderActivityLog(data.logs);
+      } else {
+        const count = data.tagged_count || 1;
+        const scope = data.auto_domain
+          ? `domain @${data.domain || '?'}`
+          : `sender ${data.email_address || ''}`;
+        appendLog({
+          ts: new Date().toLocaleTimeString(),
+          level: 'middleman',
+          message: `${label} saved (${count} messages, ${scope}) — ${subject}`,
+        });
+      }
+      // Optimistic local update for the clicked row; SSE will refresh the list.
+      if (row) {
+        const tags = Array.isArray(data.tags)
+          ? data.tags
+          : kind === 'foreign'
+            ? [data.tag_id || 'foreign_middleman']
+            : ['indian_middleman'];
+        row.tags = tags;
+        row.tag_entries = Array.isArray(data.tag_entries)
+          ? data.tag_entries
+          : publicTagEntriesFallback(tags);
+      }
+      renderInbox();
+    } catch (e) {
+      appendLog({
+        ts: new Date().toLocaleTimeString(),
+        level: 'warning',
+        message: `Confirm middleman failed — ${subject}: ${e}`,
+      });
+    }
+  }
+
+  function publicTagEntriesFallback(tags) {
+    return (tags || []).map((id) => ({
+      id,
+      label: String(id).replace(/_/g, ' '),
+      label_text: String(id).replace(/_/g, ' '),
+    }));
   }
 
   function populateThemeSelect() {
@@ -787,6 +978,42 @@
       btnPoll.disabled = false;
     }
   });
+
+  function isActivityLogHidden() {
+    try {
+      return localStorage.getItem(ACTIVITY_LOG_HIDDEN_KEY) === '1';
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function setActivityLogHidden(hidden) {
+    document.body.classList.toggle('activity-log-hidden', !!hidden);
+    if (activityLogPanel) {
+      activityLogPanel.hidden = !!hidden;
+      activityLogPanel.setAttribute('aria-hidden', hidden ? 'true' : 'false');
+    }
+    if (btnShowActivityLog) {
+      btnShowActivityLog.hidden = !hidden;
+    }
+    try {
+      localStorage.setItem(ACTIVITY_LOG_HIDDEN_KEY, hidden ? '1' : '0');
+    } catch (_) { /* ignore */ }
+  }
+
+  // Restore collapse preference before first paint-heavy work.
+  setActivityLogHidden(isActivityLogHidden());
+
+  if (btnHideActivityLog) {
+    btnHideActivityLog.addEventListener('click', () => {
+      setActivityLogHidden(true);
+    });
+  }
+  if (btnShowActivityLog) {
+    btnShowActivityLog.addEventListener('click', () => {
+      setActivityLogHidden(false);
+    });
+  }
 
   if (btnClearActivityLog) {
     btnClearActivityLog.addEventListener('click', async () => {

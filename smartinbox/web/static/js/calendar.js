@@ -54,16 +54,29 @@
     return String(kb).localeCompare(String(ka));
   }
 
+  function isMiddlemanLog(entry) {
+    const lvl = String(entry?.level || '').toLowerCase();
+    if (lvl === 'middleman') return true;
+    const msg = String(entry?.message || '');
+    return (
+      /middleman/i.test(msg) ||
+      /third-party recruiter/i.test(msg) ||
+      /Suspected third-party/i.test(msg)
+    );
+  }
+
   function buildLogElement(entry) {
     const div = document.createElement('div');
     const lvl = (entry.level || 'info').replace('warning', 'warn');
     const msg = String(entry.message || '');
     const isInboxCheck = msg.startsWith('Inbox check —');
     const isCalendar = msg.startsWith('Calendar');
-    div.className = isInboxCheck || isCalendar
-      ? 'activity-entry activity-entry--success'
-      : 'activity-entry';
-    const tsClass = isInboxCheck || isCalendar ? 'success' : lvl;
+    const middleman = isMiddlemanLog(entry);
+    let cls = 'activity-entry';
+    if (isInboxCheck || isCalendar) cls += ' activity-entry--success';
+    if (middleman) cls += ' activity-entry--middleman';
+    div.className = cls;
+    const tsClass = middleman ? 'middleman' : (isInboxCheck || isCalendar ? 'success' : lvl);
     div.innerHTML = `<span class="lvl-${tsClass}">[${entry.ts}]</span> ${escapeHtml(msg)}`;
     return div;
   }
@@ -301,6 +314,36 @@
     }
   }
 
+  function linkifyPlainText(text) {
+    const raw = String(text || '');
+    if (!raw) return '';
+    const urlRe = /(https?:\/\/[^\s<>"'`]+|www\.[^\s<>"'`]+)/gi;
+    let out = '';
+    let last = 0;
+    let match;
+    while ((match = urlRe.exec(raw)) !== null) {
+      out += escapeHtml(raw.slice(last, match.index));
+      let url = match[0];
+      let trailing = '';
+      while (/[.,);:!?\]]$/.test(url)) {
+        trailing = url.slice(-1) + trailing;
+        url = url.slice(0, -1);
+      }
+      const href = /^www\./i.test(url) ? `https://${url}` : url;
+      if (/^https?:\/\//i.test(href)) {
+        out +=
+          `<a class="original-email-link" href="${escapeHtml(href)}" ` +
+          `target="_blank" rel="noopener noreferrer">${escapeHtml(url)}</a>`;
+      } else {
+        out += escapeHtml(url);
+      }
+      out += escapeHtml(trailing);
+      last = match.index + match[0].length;
+    }
+    out += escapeHtml(raw.slice(last));
+    return out;
+  }
+
   function plainTextToEmailHtml(text) {
     const normalized = String(text || '').replace(/\r\n/g, '\n').trim();
     if (!normalized) return '<p>(empty message)</p>';
@@ -309,7 +352,7 @@
       .map((block) => {
         const lines = block
           .split('\n')
-          .map((line) => escapeHtml(line))
+          .map((line) => linkifyPlainText(line))
           .join('<br>');
         return `<p>${lines}</p>`;
       })

@@ -37,6 +37,14 @@ calendar:
   extract_concurrency: 6   # parallel Ollama calls during Check for Events (1–32)
   ollama_main_gpu: 0       # calendar text LLM (inherits ollama.main_gpu if omitted)
 
+# Background web lookups for Foreign Middleman (Canada job + foreign company).
+# Runs in a separate process/worker so inbox polling is not blocked.
+company_lookup:
+  enabled: true
+  timeout: 12              # seconds per HTTP request budget
+  max_pages: 3             # company site pages to fetch
+  use_process: true        # true = ProcessPoolExecutor isolate scrape work
+
 chatterbox_tts:
   enabled: true
   base_url: http://127.0.0.1:8004

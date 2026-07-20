@@ -97,13 +97,28 @@
     };
   }
 
+  function isMiddlemanLog(entry) {
+    const lvl = String(entry?.level || '').toLowerCase();
+    if (lvl === 'middleman') return true;
+    const msg = String(entry?.message || '');
+    return (
+      /middleman/i.test(msg) ||
+      /third-party recruiter/i.test(msg) ||
+      /Suspected third-party/i.test(msg)
+    );
+  }
+
   function buildLogElement(entry) {
     const div = document.createElement('div');
     const lvl = (entry.level || 'info').replace('warning', 'warn');
     const msg = String(entry.message || '');
     const highlight = isHighlightedLog(msg);
-    div.className = highlight ? 'activity-entry activity-entry--success' : 'activity-entry';
-    const tsClass = highlight ? 'success' : lvl;
+    const middleman = isMiddlemanLog(entry);
+    let cls = 'activity-entry';
+    if (highlight) cls += ' activity-entry--success';
+    if (middleman) cls += ' activity-entry--middleman';
+    div.className = cls;
+    const tsClass = highlight ? 'success' : middleman ? 'middleman' : lvl;
     div.innerHTML = `<span class="lvl-${tsClass}">[${entry.ts}]</span> ${escapeHtml(msg)}`;
     return div;
   }

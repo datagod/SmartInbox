@@ -14,6 +14,7 @@
   const deliveryMode = document.getElementById('delivery-mode');
   const alertGreetingName = document.getElementById('alert-greeting-name');
   const alertGreetingEnabled = document.getElementById('alert-greeting-enabled');
+  const phraseRecordingRetention = document.getElementById('phrase-recording-retention');
   const voiceSummarySwitcher = document.getElementById('voice-summary-switcher');
   const demoModeSwitcher = document.getElementById('demo-mode-switcher');
   const voiceStylePrompt = document.getElementById('voice-style-prompt');
@@ -46,12 +47,27 @@
     return String(kb).localeCompare(String(ka));
   }
 
+  function isMiddlemanLog(entry) {
+    const lvl = String(entry?.level || '').toLowerCase();
+    if (lvl === 'middleman') return true;
+    const msg = String(entry?.message || '');
+    return (
+      /middleman/i.test(msg) ||
+      /third-party recruiter/i.test(msg) ||
+      /Suspected third-party/i.test(msg)
+    );
+  }
+
   function buildLogElement(entry) {
     const div = document.createElement('div');
     const lvl = (entry.level || 'info').replace('warning', 'warn');
     const isInboxCheck = String(entry.message || '').startsWith('Inbox check —');
-    div.className = isInboxCheck ? 'activity-entry activity-entry--success' : 'activity-entry';
-    const tsClass = isInboxCheck ? 'success' : lvl;
+    const middleman = isMiddlemanLog(entry);
+    let cls = 'activity-entry';
+    if (isInboxCheck) cls += ' activity-entry--success';
+    if (middleman) cls += ' activity-entry--middleman';
+    div.className = cls;
+    const tsClass = isInboxCheck ? 'success' : middleman ? 'middleman' : lvl;
     div.innerHTML = `<span class="lvl-${tsClass}">[${entry.ts}]</span> ${escapeHtml(entry.message)}`;
     return div;
   }
@@ -280,6 +296,10 @@
       if (alertGreetingEnabled) {
         alertGreetingEnabled.value = voices.alert_greeting_enabled ? '1' : '0';
       }
+      if (phraseRecordingRetention) {
+        const hours = voices.phrase_recording_retention_hours;
+        phraseRecordingRetention.value = hours == null ? '24' : String(hours);
+      }
       voiceSummaryEnabled = !!voices.voice_summary_enabled;
       setSwitcherValue(voiceSummarySwitcher, voiceSummaryEnabled);
 
@@ -484,6 +504,9 @@
         tts_model: ttsModel.value,
         alert_greeting_name: greetingName,
         alert_greeting_enabled: greetingOn,
+        phrase_recording_retention_hours: phraseRecordingRetention
+          ? Number(phraseRecordingRetention.value)
+          : undefined,
         voice_summary_enabled: voiceSummaryEnabled,
         voice_style_prompt: promptText || undefined,
       }),

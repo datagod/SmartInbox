@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SmartInbox</title>
   <link rel="icon" href="/static/img/smartinbox-icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/css/styles.css?v=24">
+  <link rel="stylesheet" href="/static/css/styles.css?v=37">
   <link rel="stylesheet" href="/static/css/summary-themes.css?v=34">
 </head>
 <body>
@@ -488,17 +488,23 @@
         </div>
       </section>
 
-      <section class="panel activity-log-panel">
-        <div class="panel-head">
+      <section class="panel activity-log-panel" id="activity-log-panel">
+        <div class="panel-head activity-log-panel-head">
           <h2>Activity Log</h2>
-          <button type="button" class="btn btn-secondary btn-small" id="btn-clear-activity-log">Clear</button>
+          <div class="activity-log-head-actions">
+            <button type="button" class="btn btn-secondary btn-small" id="btn-clear-activity-log">Clear</button>
+            <button type="button" class="btn btn-secondary btn-small" id="btn-hide-activity-log" title="Hide activity log for more room" aria-label="Hide activity log">Hide</button>
+          </div>
         </div>
         <div class="log-scroll" id="activity-log"></div>
       </section>
     </main>
+    <button type="button" class="btn btn-secondary btn-show-activity-log" id="btn-show-activity-log" hidden title="Show activity log" aria-label="Show activity log">
+      Show activity log
+    </button>
   </div>
   <script src="/static/js/alerts.js?v=1"></script>
   <script src="/static/js/markdown.js?v=2"></script>
-  <script src="/static/js/app.js?v=55"></script>
+  <script src="/static/js/app.js?v=66"></script>
 </body>
 </html>

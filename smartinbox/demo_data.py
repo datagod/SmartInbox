@@ -213,6 +213,54 @@ def build_demo_emails() -> list[dict[str, Any]]:
             "alerted_at": None,
             "starred": 0,
         },
+        {
+            "id": "demo-007",
+            "thread_id": "demo-thread-007",
+            "account_id": "demo-gmail",
+            "account_email": "you@demo-gmail.fake",
+            "provider": "gmail",
+            "sender": "Rajesh Kumar <rajesh.kumar.bench@gmail.com>",
+            "subject": "[DEMO] Urgent C2C requirement — Canada client (SAMPLE)",
+            "snippet": "Sample third-party job middleman pitch for tag previews.",
+            "body_text": (
+                "Hi,\n\n"
+                "I came across your profile on LinkedIn. My client in Toronto, Canada has an "
+                "urgent C2C requirement for a senior engineer.\n\n"
+                "We are a preferred vendor / implementation partner based out of India "
+                "working with US and Canada end clients. Please share your updated resume "
+                "and best bill rate.\n\n"
+                "— Rajesh (DEMO bench-sales sample only)"
+            ),
+            "received_at": _NOW - hour * 3,
+            "created_at": _NOW - hour * 3,
+            "summary_short": (
+                "Demo **third-party recruiter** pitch (C2C, Canada client). Used to preview "
+                "the Possible Indian middleman tag."
+            )[:500],
+            "summary_detailed": (
+                "## Demo middleman pitch\n\n"
+                "A **fictional** India-based bench-sales style email offering a **C2C** role "
+                "for a **Canada** end client.\n\n"
+                "- Marked `[DEMO]`\n"
+                "- Shows the **Possible Indian middleman** inbox tag\n"
+                "- Not a real recruiter"
+            ),
+            "alerted_at": None,
+            "starred": 0,
+            "tags": '["possible_indian_middleman"]',
+            "tag_entries": [
+                {
+                    "id": "possible_indian_middleman",
+                    "label": "Possible Indian middleman 🇮🇳",
+                    "label_text": "Possible Indian middleman",
+                    "flag": "🇮🇳",
+                    "flag_img": "/static/img/flags/in.svg",
+                    "country_flag": "🇮🇳",
+                    "country_code": "IN",
+                    "clickable": True,
+                }
+            ],
+        },
     ]
 
 
